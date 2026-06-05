@@ -11,6 +11,7 @@ pub use core::hash::{BuildHasher, BuildHasherDefault, Hash, Hasher};
 
 use crate::sync::OnceLock;
 
+/// Load `len` (< 8) bytes little-endian into a u64. Used for partial tail words.
 #[inline]
 fn u8to64_le(buf: &[u8], start: usize, len: usize) -> u64 {
     let mut out = 0u64;
@@ -20,6 +21,15 @@ fn u8to64_le(buf: &[u8], start: usize, len: usize) -> u64 {
         i += 1;
     }
     out
+}
+
+/// Load a full 8-byte little-endian word. The compiler lowers this to a single
+/// (unaligned) load — much faster than the byte loop on the hot path.
+#[inline]
+fn load_u64_le(buf: &[u8], start: usize) -> u64 {
+    let mut bytes = [0u8; 8];
+    bytes.copy_from_slice(&buf[start..start + 8]);
+    u64::from_le_bytes(bytes)
 }
 
 macro_rules! sipround {
@@ -105,7 +115,7 @@ impl Hasher for SipHasher13 {
         let left = remaining % 8;
         let mut i = needed;
         while i < len - left {
-            let mi = u8to64_le(msg, i, 8);
+            let mi = load_u64_le(msg, i);
             self.v3 ^= mi;
             sipround!(self.v0, self.v1, self.v2, self.v3);
             self.v0 ^= mi;
