@@ -52,10 +52,12 @@ pub mod rt;
 pub mod syscall;
 
 // ---- the std-shaped surface ----
+pub mod collections;
 pub mod env;
 pub mod error;
 pub mod ffi;
 pub mod fs;
+pub mod hash;
 pub mod io;
 pub mod net;
 pub mod path;
@@ -81,9 +83,9 @@ mod start;
 // ---------------------------------------------------------------------------
 
 pub use core::{
-    any, arch as core_arch, ascii, cell, char, clone, cmp, convert, default, future, hash, hint,
-    iter, marker, mem, num, ops, option, panic as core_panic, pin, primitive, ptr, result, slice,
-    str, task,
+    any, arch as core_arch, ascii, cell, char, clone, cmp, convert, default, future, hint, iter,
+    marker, mem, num, ops, option, panic as core_panic, pin, primitive, ptr, result, slice, str,
+    task,
 };
 pub use core::{
     assert, assert_eq, assert_ne, debug_assert, debug_assert_eq, debug_assert_ne, format_args,
@@ -91,15 +93,6 @@ pub use core::{
 };
 
 pub use alloc::{borrow, boxed, fmt, format, rc, string, vec};
-
-/// Collections: ordered ones from `alloc`, hash ones from `hashbrown` (so
-/// `HashMap`/`HashSet` need no type params, matching `std`).
-pub mod collections {
-    pub use crate::alloc::collections::{
-        btree_map, btree_set, BTreeMap, BTreeSet, BinaryHeap, LinkedList, VecDeque,
-    };
-    pub use hashbrown::{hash_map, hash_set, HashMap, HashSet};
-}
 
 /// `std::panic` subset. Under `panic = "abort"` there is no unwinding, so
 /// `catch_unwind` simply runs the closure (a panic aborts the process).

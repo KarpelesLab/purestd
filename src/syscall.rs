@@ -104,6 +104,42 @@ pub fn getpid() -> u32 {
     unsafe { arch::syscall0(nr::GETPID) as u32 }
 }
 
+/// Fill `buf` with cryptographically-secure random bytes from the kernel.
+///
+/// Uses `getrandom` on Linux and `getentropy` on macOS (which caps each call at
+/// 256 bytes and returns 0 on success rather than a count).
+#[inline]
+pub fn getrandom(buf: &mut [u8]) -> Result<(), Errno> {
+    #[cfg(target_os = "macos")]
+    {
+        // getentropy(ptr, len) — at most 256 bytes per call, returns 0/-errno.
+        let mut off = 0;
+        while off < buf.len() {
+            let n = core::cmp::min(256, buf.len() - off);
+            from_ret(unsafe {
+                arch::syscall2(nr::GETENTROPY, buf[off..].as_mut_ptr() as usize, n)
+            })?;
+            off += n;
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // getrandom(ptr, len, flags) — returns the number of bytes filled.
+        let mut off = 0;
+        while off < buf.len() {
+            let n = from_ret(unsafe {
+                arch::syscall3(nr::GETRANDOM, buf[off..].as_mut_ptr() as usize, buf.len() - off, 0)
+            })?;
+            if n == 0 {
+                return Err(Errno(5)); // EIO: made no progress
+            }
+            off += n;
+        }
+        Ok(())
+    }
+}
+
 /// `unlinkat(AT_FDCWD, path, 0)` — remove a file. `path` must be NUL-terminated.
 /// (aarch64 Linux has no bare `unlink`, so we always use the `*at` form.)
 #[inline]

@@ -11,6 +11,10 @@ standard library — programs written against purestd compile, via the fullrust
 toolchain, into real fully-static libc-free binaries — and to be usable on its
 own.
 
+**Zero third-party dependencies.** purestd is built on `core` + `alloc` and
+nothing else — it implements its own hash map, hasher, allocator, and OS layer.
+`cargo tree` shows only `purestd`.
+
 ```rust
 #![no_std]
 #![no_main]
@@ -89,7 +93,8 @@ scripts/build-linux.sh stdshow aarch64
 Working: process entry/exit, panic, mmap allocator, `args`/env, `io` (`Read`/
 `Write`/`Error`/std streams), `fs` (`File`/`OpenOptions`/`read`/`write`),
 `process`, `time`, `sync` (`Mutex`/`RwLock`/`Once`/`OnceLock`), `path`, `ffi`,
-`collections` (`HashMap` via hashbrown + the `alloc` containers).
+`hash` (own SipHash-1-3 + `RandomState` seeded from `getrandom`/`getentropy`),
+`collections` (own open-addressing `HashMap`/`HashSet` + the `alloc` containers).
 
 Not yet: real threads (clone/futex), `process::Command`, sockets (`net`),
 buffered readers/writers. `thread`/`net` are present as compiling placeholders.

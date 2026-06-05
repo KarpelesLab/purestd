@@ -9,9 +9,8 @@ license = "MIT OR Apache-2.0"
 # no_std library; built without the platform std/libc.
 
 [dependencies]
-# Hash maps without libc/std. `default-hasher` pulls in foldhash so `HashMap`
-# works with no type params, matching `std::collections::HashMap`.
-hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
+# No third-party dependencies — purestd implements its own everything
+# (hash map, hasher, …) on top of core + alloc only.
 
 [features]
 # `rt` provides the binary-level policy symbols: `_start`, the `#[panic_handler]`,
