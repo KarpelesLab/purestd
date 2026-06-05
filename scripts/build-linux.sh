@@ -1,34 +1,38 @@
 #!/usr/bin/env bash
-# Build a purestd example as a fully-static, libc-free Linux ELF, cross-compiled
-# from this macOS host using rustup's toolchain + rust-lld.
+# Build purestd examples as fully-static, libc-free ELFs for a Linux target,
+# using the toolchain's bundled rust-lld. Portable: works both natively on Linux
+# and cross-compiled from macOS (the toolchain just needs the target's std).
 #
-# Usage: scripts/build-linux.sh <example> [x86_64|aarch64]
-#
-# This is a development convenience. The "real" packaging path is the
-# cargo-fullrust toolchain, which wires purestd in as the sysroot `std`.
+# Usage:
+#   scripts/build-linux.sh                       # all examples, host-ish default x86_64
+#   scripts/build-linux.sh <example> <arch>      # one example (arch: x86_64|aarch64)
+#   TARGET=aarch64-unknown-linux-gnu scripts/build-linux.sh --all
 set -euo pipefail
 
-EXAMPLE="${1:-hello}"
 ARCH="${2:-x86_64}"
-
-case "$ARCH" in
-  x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
-  aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
-  *) echo "arch must be x86_64 or aarch64" >&2; exit 2 ;;
+case "${TARGET:-}" in
+  "") case "$ARCH" in
+        x86_64)  TARGET="x86_64-unknown-linux-gnu" ;;
+        aarch64) TARGET="aarch64-unknown-linux-gnu" ;;
+        *) echo "arch must be x86_64 or aarch64" >&2; exit 2 ;;
+      esac ;;
 esac
 
-# rustup's stable toolchain has the Linux std + rust-lld; the Homebrew rustc on
-# PATH does not, so we point RUSTC at rustup's rustc explicitly.
-TC="$(rustc +stable --print sysroot 2>/dev/null || true)"
-if [ -z "$TC" ]; then
-  TC="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin"
+# rust-lld ships inside the toolchain; locate it under the sysroot.
+SYSROOT="$(rustc --print sysroot)"
+RUSTLLD="$(find "$SYSROOT" -name rust-lld 2>/dev/null | head -1)"
+if [ -z "$RUSTLLD" ]; then
+  echo "rust-lld not found under $SYSROOT (try: rustup component add llvm-tools)" >&2
+  exit 1
 fi
-RUSTLLD="$(find "$TC" -name rust-lld | head -1)"
 
-RUSTC="$TC/bin/rustc" "$TC/bin/cargo" build --example "$EXAMPLE" --target "$TARGET" \
-  --config "target.$TARGET.linker=\"$RUSTLLD\"" \
-  --config "target.$TARGET.rustflags=[\"-Clinker-flavor=ld.lld\",\"-Crelocation-model=static\",\"-Clink-arg=-static\",\"-Clink-arg=-no-pie\"]"
+export RUSTFLAGS="-Clinker-flavor=ld.lld -Clinker=$RUSTLLD -Crelocation-model=static -Clink-arg=-static -Clink-arg=-no-pie"
 
-BIN="target/$TARGET/debug/examples/$EXAMPLE"
-echo
-file "$BIN"
+if [ "${1:-}" = "" ] || [ "${1:-}" = "--all" ]; then
+  cargo build --examples --target "$TARGET"
+  echo "built all examples for $TARGET:"
+  ls "target/$TARGET/debug/examples"/*.d 2>/dev/null | sed 's#.*/##; s/\.d$//' | sort -u
+else
+  cargo build --example "$1" --target "$TARGET"
+  file "target/$TARGET/debug/examples/$1"
+fi

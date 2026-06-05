@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  # macOS / Apple Silicon — builds with the native ld64 (libSystem present but
+  # never called) and runs every example natively.
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup default stable && rustc -V
+      - name: Build examples
+        run: cargo build --examples
+      - name: Verify purity (no libc imports beyond the loader stub)
+        run: |
+          set -eo pipefail
+          for ex in hello args stdshow mapstress sipcheck threads; do
+            n=$(nm -u "target/debug/examples/$ex" | grep -v dyld_stub_binder | wc -l | tr -d ' ')
+            echo "$ex: $n non-loader imports"
+            test "$n" = "0"
+          done
+      - name: Run & validate
+        shell: bash
+        run: |
+          set -eo pipefail
+          B=target/debug/examples
+          timeout 60 "$B/hello"        | tee /dev/stderr | grep -q "hello from purestd"
+          timeout 60 "$B/args" a b c   | tee /dev/stderr | grep -q "\[3\] c"
+          timeout 60 "$B/stdshow"      | tee /dev/stderr | grep -q "^ok$"
+          timeout 60 "$B/mapstress"    | tee /dev/stderr | grep -q "checks passed"
+          timeout 60 "$B/sipcheck"     | tee /dev/stderr | grep -q "reference vectors match"
+          timeout 60 "$B/threads"      | tee /dev/stderr | grep -q "counter = 80000"
+
+  # Linux x86_64 and aarch64 — builds fully-static libc-free ELFs with rust-lld
+  # and runs them natively (this is where the clone+futex thread path is
+  # actually exercised).
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: |
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+          rustup component add llvm-tools || true
+          rustc -V
+      - name: Build freestanding examples
+        run: TARGET=${{ matrix.target }} scripts/build-linux.sh --all
+      - name: Confirm static & libc-free
+        run: |
+          set -eo pipefail
+          f="target/${{ matrix.target }}/debug/examples/hello"
+          file "$f"
+          file "$f" | grep -q "statically linked"
+          # No dynamic interpreter / NEEDED libs.
+          ! (readelf -d "$f" 2>/dev/null | grep -qE "NEEDED|INTERP")
+      - name: Run & validate (native)
+        shell: bash
+        run: |
+          set -eo pipefail
+          B=target/${{ matrix.target }}/debug/examples
+          timeout 60 "$B/hello"        | tee /dev/stderr | grep -q "hello from purestd"
+          timeout 60 "$B/args" a b c   | tee /dev/stderr | grep -q "\[3\] c"
+          timeout 60 "$B/stdshow"      | tee /dev/stderr | grep -q "^ok$"
+          timeout 60 "$B/mapstress"    | tee /dev/stderr | grep -q "checks passed"
+          timeout 60 "$B/sipcheck"     | tee /dev/stderr | grep -q "reference vectors match"
+          timeout 60 "$B/threads"      | tee /dev/stderr | grep -q "counter = 80000"
