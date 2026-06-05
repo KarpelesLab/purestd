@@ -97,8 +97,13 @@ Working: process entry/exit, panic, mmap allocator, `args`/env, `io` (`Read`/
 verified against the canonical reference vectors — `cargo run --example sipcheck`),
 `collections` (own open-addressing `HashMap`/`HashSet` + the `alloc` containers).
 
-Not yet: real threads (clone/futex), `process::Command`, sockets (`net`),
-buffered readers/writers. `thread`/`net` are present as compiling placeholders.
+Threads are real OS threads: `thread::spawn`/`JoinHandle::join`/`Builder`,
+`sleep`, `yield_now`, futex-based join. On macOS they use Mach
+`thread_create_running` (no libc, no libpthread — see `docs/macos-threads.md`)
+and run natively; on Linux they use `clone` + `futex` (compile-verified).
+
+Not yet: `process::Command`, sockets (`net`), buffered readers/writers, TLS,
+thread names/parking. `net` is a compiling placeholder.
 
 ## License
 

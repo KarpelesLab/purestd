@@ -100,6 +100,11 @@ pub mod nr {
     pub const MMAP: usize = 222;
     pub const GETRANDOM: usize = 278;
     pub const GETENTROPY: usize = GETRANDOM;
+    pub const SCHED_YIELD: usize = 124;
+    pub const NANOSLEEP: usize = 101;
+    pub const FUTEX: usize = 98;
+    pub const CLONE: usize = 220;
+    pub const GETTID: usize = 178;
 }
 
 pub const AT_FDCWD: isize = -100;

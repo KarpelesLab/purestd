@@ -72,6 +72,11 @@ pub mod nr {
     pub const OPENAT: usize = 257;
     pub const GETRANDOM: usize = 318;
     pub const GETENTROPY: usize = GETRANDOM;
+    pub const SCHED_YIELD: usize = 24;
+    pub const NANOSLEEP: usize = 35;
+    pub const FUTEX: usize = 202;
+    pub const CLONE: usize = 56;
+    pub const GETTID: usize = 186;
 }
 
 pub const AT_FDCWD: isize = -100;

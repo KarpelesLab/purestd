@@ -66,6 +66,8 @@ pub mod sync;
 pub mod thread;
 pub mod time;
 
+mod sys_thread;
+
 pub use syscall::Errno;
 
 // Binary-level policy symbols, behind the default `rt` feature.
