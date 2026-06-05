@@ -20,7 +20,8 @@ jobs:
         run: |
           set -eo pipefail
           for ex in hello args stdshow mapstress sipcheck threads; do
-            n=$(nm -u "target/debug/examples/$ex" | grep -v dyld_stub_binder | wc -l | tr -d ' ')
+            # grep -vc exits 1 when the count is 0 (the good case), so swallow it.
+            n=$(nm -u "target/debug/examples/$ex" | { grep -vc dyld_stub_binder || true; })
             echo "$ex: $n non-loader imports"
             test "$n" = "0"
           done
