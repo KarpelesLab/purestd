@@ -93,7 +93,8 @@ scripts/build-linux.sh stdshow aarch64
 Working: process entry/exit, panic, mmap allocator, `args`/env, `io` (`Read`/
 `Write`/`Error`/std streams), `fs` (`File`/`OpenOptions`/`read`/`write`),
 `process`, `time`, `sync` (`Mutex`/`RwLock`/`Once`/`OnceLock`), `path`, `ffi`,
-`hash` (own SipHash-1-3 + `RandomState` seeded from `getrandom`/`getentropy`),
+`hash` (own SipHash-1-3 + `RandomState` seeded from `getrandom`/`getentropy`;
+verified against the canonical reference vectors — `cargo run --example sipcheck`),
 `collections` (own open-addressing `HashMap`/`HashSet` + the `alloc` containers).
 
 Not yet: real threads (clone/futex), `process::Command`, sockets (`net`),
