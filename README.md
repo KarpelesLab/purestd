@@ -8,9 +8,14 @@ guarantees intact all the way down to the syscall instruction.
 
 The pieces a libc-free binary *also* needs but which in a hosted build come from
 **crt0 / compiler_builtins / the unwinder** — the process entry point `_start`,
-the `mem*`/unwind/`getauxval` symbols — are *not* in purestd. They live in a tiny
-companion crate, [`purert`](crt/), which a program links alongside purestd
-(`extern crate purert;`). So purestd is only `std`; `purert` is only the runtime.
+the `mem*`/unwind/`getauxval` symbols — are deliberately *not* in purestd. Those
+are the toolchain's job: when you build through
+[fullrust](https://github.com/KarpelesLab/fullrust), it supplies them. purestd is
+only `std`.
+
+(The examples in this repo link a tiny test-only stand-in for them,
+[`examples/common/rt.rs`](examples/common/rt.rs), so they can build and run
+standalone for the dev loop and CI.)
 
 It is designed to be [fullrust](https://github.com/KarpelesLab/fullrust)'s
 standard library — programs written against purestd compile, via the fullrust
@@ -25,7 +30,6 @@ nothing else — it implements its own hash map, hasher, allocator, and OS layer
 #![no_std]
 #![no_main]
 
-extern crate purert; // the runtime: _start + the mem*/unwind symbols
 use purestd::prelude::*;
 
 fn main() {
@@ -35,6 +39,9 @@ fn main() {
 purestd::entry!(main);
 ```
 
+Built through fullrust, that's the whole program — the toolchain provides the
+entry point and the `mem*`/unwind symbols.
+
 ## "No libc" — and how it's verified
 
 * **Linux** binaries are fully static ELFs with **no dynamic interpreter and no
@@ -42,7 +49,7 @@ purestd::entry!(main);
 * **macOS** links `libSystem` as a load-command only because `ld64` mandates it;
   purestd makes **zero calls into it**. `nm -u <binary>` lists only the loader
   stub `dyld_stub_binder`. The `memcpy`/`memset`/`bzero`/`strlen` it references
-  are defined by `purert` (see [`crt/src/intrinsics.rs`](crt/src/intrinsics.rs)).
+  are resolved by the toolchain (fullrust), not by libc.
 
 ## Targets
 
@@ -58,20 +65,21 @@ syscall number table. Everything above is OS-neutral.
 
 ## Layout
 
-```
-purestd (the std):
-  arch/      raw syscall wrappers + number table (per target)
-  syscall    arch-neutral, Result-returning wrappers (Errno)
-  allocator  mmap-backed segregated free-list (#[global_allocator])
-  panic      the #[panic_handler]
-  start      __purestd_start — the lang_start-equivalent runtime glue
-  rt         exit/abort + Termination (main may return (), i32, Result)
-  io fs env process time sync path ffi error net thread   ← the std surface
+purestd is a single crate — only `std`:
 
-purert (the runtime — crt0/compiler_builtins equivalent):
-  entry      _start (per target) → __purestd_start
-  intrinsics mem*/strlen + unwind stubs + getauxval
 ```
+arch/      raw syscall wrappers + number table (per target)
+syscall    arch-neutral, Result-returning wrappers (Errno)
+allocator  mmap-backed segregated free-list (#[global_allocator])
+panic      the #[panic_handler]
+start      __purestd_start — the lang_start-equivalent runtime glue
+rt         exit/abort + Termination (main may return (), i32, Result)
+io fs env process time sync path ffi error net thread   ← the std surface
+```
+
+The process entry point and `mem*`/unwind/`getauxval` symbols are not here —
+fullrust provides them (the examples use a test stand-in,
+`examples/common/rt.rs`).
 
 `core` and `alloc` are re-exported under `std`-shaped paths (`mem`, `cmp`,
 `fmt`, `vec`, `collections`, …), so when purestd is aliased as `std` for a
@@ -84,8 +92,7 @@ Gates the std-provided *policy* symbols — the `#[panic_handler]`, the
 `#[global_allocator]` static, and the `lang_start`-equivalent runtime glue
 (`__purestd_start`). Disable it (`default-features = false`) when a host runtime
 supplies those instead. The *mechanisms* (syscalls, the allocator type, the
-`std` surface) are always available. The process entry point and the
-`mem*`/unwind intrinsics are not gated here — they are simply the `purert` crate.
+`std` surface) are always available.
 
 ## Building
 
