@@ -29,13 +29,14 @@ jobs:
         shell: bash
         run: |
           set -eo pipefail
+          # macOS runners have no `timeout`; examples exit on their own.
           B=target/debug/examples
-          timeout 60 "$B/hello"        | tee /dev/stderr | grep -q "hello from purestd"
-          timeout 60 "$B/args" a b c   | tee /dev/stderr | grep -q "\[3\] c"
-          timeout 60 "$B/stdshow"      | tee /dev/stderr | grep -q "^ok$"
-          timeout 60 "$B/mapstress"    | tee /dev/stderr | grep -q "checks passed"
-          timeout 60 "$B/sipcheck"     | tee /dev/stderr | grep -q "reference vectors match"
-          timeout 60 "$B/threads"      | tee /dev/stderr | grep -q "counter = 80000"
+          "$B/hello"        | tee /dev/stderr | grep -q "hello from purestd"
+          "$B/args" a b c   | tee /dev/stderr | grep -q "\[3\] c"
+          "$B/stdshow"      | tee /dev/stderr | grep -q "^ok$"
+          "$B/mapstress"    | tee /dev/stderr | grep -q "checks passed"
+          "$B/sipcheck"     | tee /dev/stderr | grep -q "reference vectors match"
+          "$B/threads"      | tee /dev/stderr | grep -q "counter = 80000"
 
   # Linux x86_64 and aarch64 — builds fully-static libc-free ELFs with rust-lld
   # and runs them natively (this is where the clone+futex thread path is
