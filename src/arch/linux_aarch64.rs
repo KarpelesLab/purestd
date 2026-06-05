@@ -14,8 +14,6 @@
 //! Numbers follow the `asm-generic` table shared by aarch64/riscv.
 
 use core::arch::asm;
-#[cfg(feature = "rt")]
-use core::arch::naked_asm;
 
 #[inline]
 pub unsafe fn syscall6(
@@ -65,21 +63,6 @@ pub unsafe fn syscall4(n: usize, a0: usize, a1: usize, a2: usize, a3: usize) -> 
 #[inline]
 pub unsafe fn syscall5(n: usize, a0: usize, a1: usize, a2: usize, a3: usize, a4: usize) -> usize {
     syscall6(n, a0, a1, a2, a3, a4, 0)
-}
-
-/// Kernel entry point. Captures `sp` (→ `argc`), 16-byte-aligns it, and hands
-/// off to [`crate::start::rust_start`], which never returns.
-#[cfg(feature = "rt")]
-#[unsafe(naked)]
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    naked_asm!(
-        "mov x0, sp",        // x0 = pointer to argc
-        "and x1, x0, #-16",  // align (sp is already 16-aligned at entry)
-        "mov sp, x1",
-        "b {start}",
-        start = sym crate::start::rust_start,
-    )
 }
 
 /// Linux/aarch64 syscall numbers (asm-generic table).

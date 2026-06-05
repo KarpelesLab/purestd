@@ -1,14 +1,12 @@
-//! Kernel/loader process entry. Gated behind `rt`; a host runtime may provide
-//! its own `_start` and call `__purestd_main` itself.
+//! The std-runtime start glue — the analogue of `std`'s `lang_start`.
 //!
-//! The argument-passing ABI differs by platform:
+//! The process entry point `_start` lives in the separate `purert` runtime crate
+//! (crt0's job, not std's). After it decodes `argc`/`argv`/`envp` it calls
+//! `__purestd_start` here, which initializes the environment, runs the user
+//! `main` (exported as `__purestd_main` by [`crate::entry!`]), and exits.
 //!
-//! * **macOS/arm64** uses the Mach-O `LC_MAIN` convention: the loader calls the
-//!   entry like `main(argc, argv, envp, apple)` with the values already in
-//!   `x0..x3`. So `_start` is a plain `extern "C"` function — no naked prologue.
-//! * **Linux** passes them on the initial stack (`sp -> argc, argv.., envp..`).
-//!   The naked `_start` lives in [`crate::arch`] (the asm differs per arch);
-//!   it captures `sp` and tail-calls [`rust_start`] here.
+//! Gated behind the `rt` feature: like `std`, `purestd` provides this by
+//! default, but a host runtime may supply its own and turn it off.
 
 use crate::{env, syscall};
 
@@ -17,27 +15,14 @@ extern "C" {
     fn __purestd_main() -> i32;
 }
 
-/// macOS/arm64 entry — arguments arrive in registers.
-#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+/// Called by the `purert` `_start` with the decoded argument/environment
+/// vectors. Runs `main` and exits; never returns.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn _start(
+pub unsafe extern "C" fn __purestd_start(
     argc: usize,
     argv: *const *const u8,
     envp: *const *const u8,
 ) -> ! {
-    env::init(argc, argv, envp);
-    let code = __purestd_main();
-    syscall::exit_group(code)
-}
-
-/// Linux entry — `stack` points at `argc`, the classic SysV initial stack.
-/// Called by the naked `_start` in [`crate::arch`].
-#[cfg(target_os = "linux")]
-pub(crate) unsafe extern "C" fn rust_start(stack: *const usize) -> ! {
-    let argc = *stack;
-    let argv = stack.add(1) as *const *const u8;
-    // envp follows argv and its NULL terminator: argv[argc] is NULL, then envp.
-    let envp = argv.add(argc + 1);
     env::init(argc, argv, envp);
     let code = __purestd_main();
     syscall::exit_group(code)

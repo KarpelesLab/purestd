@@ -1,5 +1,7 @@
 #![no_std]
 #![no_main]
+
+extern crate purert;
 use purestd::prelude::*;
 use purestd::env;
 

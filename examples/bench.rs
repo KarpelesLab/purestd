@@ -8,6 +8,8 @@
 //! CARGO_PROFILE_RELEASE_OPT_LEVEL=3 cargo run --release --example bench
 //! ```
 
+extern crate purert;
+
 use purestd::collections::HashMap;
 use purestd::hash::{Hasher, SipHasher13};
 use purestd::prelude::*;

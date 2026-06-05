@@ -1,6 +1,8 @@
 #![no_std]
 #![no_main]
 
+extern crate purert;
+
 use purestd::prelude::*;
 use purestd::{collections::HashMap, env, fs, io::Write, path::Path, process, sync::Mutex, time};
 

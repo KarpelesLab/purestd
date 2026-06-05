@@ -11,8 +11,6 @@
 //! No return address, no C runtime — `_start` must never return.
 
 use core::arch::asm;
-#[cfg(feature = "rt")]
-use core::arch::naked_asm;
 
 macro_rules! syscall_fn {
     ($name:ident; $($arg:ident => $reg:tt),*) => {
@@ -39,21 +37,6 @@ syscall_fn!(syscall3; a => "rdi", b => "rsi", c => "rdx");
 syscall_fn!(syscall4; a => "rdi", b => "rsi", c => "rdx", d => "r10");
 syscall_fn!(syscall5; a => "rdi", b => "rsi", c => "rdx", d => "r10", e => "r8");
 syscall_fn!(syscall6; a => "rdi", b => "rsi", c => "rdx", d => "r10", e => "r8", f => "r9");
-
-/// Kernel entry point, replacing crt0. Captures `rsp` (→ `argc`), 16-byte-aligns
-/// the stack, and hands off to [`crate::start::rust_start`], which never returns.
-#[cfg(feature = "rt")]
-#[unsafe(naked)]
-#[unsafe(no_mangle)]
-pub extern "C" fn _start() -> ! {
-    naked_asm!(
-        "xor rbp, rbp",
-        "mov rdi, rsp",
-        "and rsp, -16",
-        "call {start}",
-        start = sym crate::start::rust_start,
-    )
-}
 
 /// Linux/x86-64 syscall numbers.
 pub mod nr {

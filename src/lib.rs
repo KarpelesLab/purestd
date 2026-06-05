@@ -27,13 +27,22 @@
 //! * `core`/`alloc` are re-exported under `std`-shaped paths so existing imports
 //!   resolve here.
 //!
+//! ## Scope: purestd is *only* `std`
+//!
+//! purestd provides exactly what a real `std` provides. The lower-level pieces a
+//! libc-free binary also needs — the process entry point `_start` and the
+//! `mem*`/unwind/`getauxval` symbols — come from **crt0** and
+//! **compiler_builtins** in a hosted build, not from std, so they live in the
+//! separate [`purert`](https://docs.rs/purert) runtime crate. A program links
+//! both (`extern crate purert;`).
+//!
 //! ## `rt` feature (default)
 //!
-//! Gates the binary-level *policy* symbols — `_start`, the `#[panic_handler]`,
-//! the `#[global_allocator]` static, and the `mem*`/unwind intrinsics. Disable
-//! it (`default-features = false`) when another crate in the final binary
-//! supplies those. The *mechanisms* (syscalls, [`allocator::Allocator`], the
-//! `std` surface, [`rt::Termination`]) are always available.
+//! Gates the std-provided *policy* symbols — the `#[panic_handler]`, the
+//! `#[global_allocator]` static, and the `lang_start`-equivalent runtime glue
+//! (`__purestd_start`). Disable it (`default-features = false`) when a host
+//! runtime supplies those. The *mechanisms* (syscalls, [`allocator::Allocator`],
+//! the `std` surface, [`rt::Termination`]) are always available.
 
 #![no_std]
 #![allow(clippy::missing_safety_doc)]
@@ -70,9 +79,10 @@ mod sys_thread;
 
 pub use syscall::Errno;
 
-// Binary-level policy symbols, behind the default `rt` feature.
-#[cfg(feature = "rt")]
-mod intrinsics;
+// The std-provided policy symbols (panic handler, global allocator, and the
+// `lang_start`-equivalent runtime glue), behind the default `rt` feature. The
+// process entry point and the mem*/unwind intrinsics are NOT here — like crt0
+// and compiler_builtins in a hosted build, they live in the `purert` crate.
 #[cfg(feature = "rt")]
 mod panic;
 #[cfg(feature = "rt")]

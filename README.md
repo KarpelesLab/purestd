@@ -2,9 +2,15 @@
 
 A **drop-in replacement for Rust's `std` that does not depend on libc.** Every
 operation is a direct kernel syscall — no C library, no C runtime. Built on
-`core` + `alloc`, purestd supplies the layer a freestanding program is otherwise
-missing (process entry, panic handler, allocator, I/O, the `std`-shaped API) and
-keeps Rust's guarantees intact all the way down to the syscall instruction.
+`core` + `alloc`, purestd supplies exactly what a real `std` provides (panic
+handler, global allocator, I/O, the `std`-shaped API) and keeps Rust's
+guarantees intact all the way down to the syscall instruction.
+
+The pieces a libc-free binary *also* needs but which in a hosted build come from
+**crt0 / compiler_builtins / the unwinder** — the process entry point `_start`,
+the `mem*`/unwind/`getauxval` symbols — are *not* in purestd. They live in a tiny
+companion crate, [`purert`](crt/), which a program links alongside purestd
+(`extern crate purert;`). So purestd is only `std`; `purert` is only the runtime.
 
 It is designed to be [fullrust](https://github.com/KarpelesLab/fullrust)'s
 standard library — programs written against purestd compile, via the fullrust
@@ -19,6 +25,7 @@ nothing else — it implements its own hash map, hasher, allocator, and OS layer
 #![no_std]
 #![no_main]
 
+extern crate purert; // the runtime: _start + the mem*/unwind symbols
 use purestd::prelude::*;
 
 fn main() {
@@ -34,8 +41,8 @@ purestd::entry!(main);
   libc** at all (`file` reports `statically linked`, no `/lib64/ld`).
 * **macOS** links `libSystem` as a load-command only because `ld64` mandates it;
   purestd makes **zero calls into it**. `nm -u <binary>` lists only the loader
-  stub `dyld_stub_binder`. Our own `memcpy`/`memset`/`bzero`/`strlen` are defined
-  locally (see [`src/intrinsics.rs`](src/intrinsics.rs)).
+  stub `dyld_stub_binder`. The `memcpy`/`memset`/`bzero`/`strlen` it references
+  are defined by `purert` (see [`crt/src/intrinsics.rs`](crt/src/intrinsics.rs)).
 
 ## Targets
 
@@ -52,12 +59,18 @@ syscall number table. Everything above is OS-neutral.
 ## Layout
 
 ```
-arch/      raw syscall wrappers + number table + _start (per target)
-syscall    arch-neutral, Result-returning wrappers (Errno)
-allocator  mmap-backed segregated free-list (#[global_allocator])
-intrinsics mem*/strlen + unwind stubs the toolchain needs without libc
-rt         exit/abort + Termination (main may return (), i32, Result)
-io fs env process time sync path ffi error net thread   ← the std surface
+purestd (the std):
+  arch/      raw syscall wrappers + number table (per target)
+  syscall    arch-neutral, Result-returning wrappers (Errno)
+  allocator  mmap-backed segregated free-list (#[global_allocator])
+  panic      the #[panic_handler]
+  start      __purestd_start — the lang_start-equivalent runtime glue
+  rt         exit/abort + Termination (main may return (), i32, Result)
+  io fs env process time sync path ffi error net thread   ← the std surface
+
+purert (the runtime — crt0/compiler_builtins equivalent):
+  entry      _start (per target) → __purestd_start
+  intrinsics mem*/strlen + unwind stubs + getauxval
 ```
 
 `core` and `alloc` are re-exported under `std`-shaped paths (`mem`, `cmp`,
@@ -67,11 +80,12 @@ freestanding target, ordinary `use std::io::Write;` / `std::fs::read(..)` /
 
 ## The `rt` feature (default on)
 
-Gates the binary-level *policy* symbols — `_start`, the `#[panic_handler]`, the
-`#[global_allocator]` static, and the `mem*`/unwind intrinsics. Disable it
-(`default-features = false`) when a host runtime supplies those instead. The
-*mechanisms* (syscalls, the allocator type, the `std` surface) are always
-available.
+Gates the std-provided *policy* symbols — the `#[panic_handler]`, the
+`#[global_allocator]` static, and the `lang_start`-equivalent runtime glue
+(`__purestd_start`). Disable it (`default-features = false`) when a host runtime
+supplies those instead. The *mechanisms* (syscalls, the allocator type, the
+`std` surface) are always available. The process entry point and the
+`mem*`/unwind intrinsics are not gated here — they are simply the `purert` crate.
 
 ## Building
 

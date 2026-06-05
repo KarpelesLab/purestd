@@ -12,13 +12,23 @@ license = "MIT OR Apache-2.0"
 # No third-party dependencies — purestd implements its own everything
 # (hash map, hasher, …) on top of core + alloc only.
 
+[dev-dependencies]
+# The freestanding runtime (process entry + mem*/unwind intrinsics) that the
+# example binaries link alongside purestd. Not a dependency of the library
+# itself — purestd is only the std.
+purert = { path = "crt" }
+
 [features]
-# `rt` provides the binary-level policy symbols: `_start`, the `#[panic_handler]`,
-# the `#[global_allocator]` static, and the `mem*`/unwind intrinsics. On by
-# default (standalone use). Turn it off (`default-features = false`) when a host
-# runtime supplies those instead.
+# `rt` provides the std-level policy symbols: the `#[panic_handler]`, the
+# `#[global_allocator]` static, and the `lang_start`-equivalent runtime glue.
+# On by default (like a real std). Turn it off (`default-features = false`) when
+# a host runtime supplies those instead. The process entry point and the
+# mem*/unwind intrinsics are NOT here — they live in the `purert` crate.
 default = ["rt"]
 rt = []
+
+[workspace]
+members = ["crt"]
 
 [profile.dev]
 panic = "abort"
