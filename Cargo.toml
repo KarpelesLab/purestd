@@ -1,0 +1,38 @@
+[package]
+name = "purestd"
+version = "0.0.1"
+edition = "2021"
+description = "A pure-Rust standard library replacement that talks to the kernel via raw syscalls only — no libc."
+license = "MIT OR Apache-2.0"
+
+[lib]
+# no_std library; built without the platform std/libc.
+
+[dependencies]
+# Hash maps without libc/std. `default-hasher` pulls in foldhash so `HashMap`
+# works with no type params, matching `std::collections::HashMap`.
+hashbrown = { version = "0.15", default-features = false, features = ["default-hasher"] }
+
+[features]
+# `rt` provides the binary-level policy symbols: `_start`, the `#[panic_handler]`,
+# the `#[global_allocator]` static, and the `mem*`/unwind intrinsics. On by
+# default (standalone use). Turn it off (`default-features = false`) when a host
+# runtime supplies those instead.
+default = ["rt"]
+rt = []
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+lto = true
+opt-level = "z"
+
+[[example]]
+name = "hello"
+path = "examples/hello.rs"
+
+[[example]]
+name = "stdshow"
+path = "examples/stdshow.rs"

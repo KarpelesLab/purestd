@@ -1,0 +1,82 @@
+//! x86-64 Linux: syscall instruction wrappers, entry point, syscall numbers.
+//!
+//! ## Syscall ABI
+//! Number in `rax`; arguments in `rdi, rsi, rdx, r10, r8, r9`; result in `rax`.
+//! `syscall` clobbers `rcx`/`r11`. Errors come back as `-errno` in `[-4095, -1]`,
+//! which [`crate::syscall::from_ret`] already understands.
+//!
+//! ## Process entry ABI
+//! On `execve` the kernel jumps to `_start` with `rsp` at `argc`, followed by the
+//! `argv` pointers, NULL, the `envp` pointers, NULL, then the auxiliary vector.
+//! No return address, no C runtime — `_start` must never return.
+
+use core::arch::asm;
+#[cfg(feature = "rt")]
+use core::arch::naked_asm;
+
+macro_rules! syscall_fn {
+    ($name:ident; $($arg:ident => $reg:tt),*) => {
+        #[inline]
+        pub unsafe fn $name(n: usize $(, $arg: usize)*) -> usize {
+            let ret;
+            asm!(
+                "syscall",
+                inlateout("rax") n => ret,
+                $(in($reg) $arg,)*
+                lateout("rcx") _,
+                lateout("r11") _,
+                options(nostack, preserves_flags),
+            );
+            ret
+        }
+    };
+}
+
+syscall_fn!(syscall0;);
+syscall_fn!(syscall1; a => "rdi");
+syscall_fn!(syscall2; a => "rdi", b => "rsi");
+syscall_fn!(syscall3; a => "rdi", b => "rsi", c => "rdx");
+syscall_fn!(syscall4; a => "rdi", b => "rsi", c => "rdx", d => "r10");
+syscall_fn!(syscall5; a => "rdi", b => "rsi", c => "rdx", d => "r10", e => "r8");
+syscall_fn!(syscall6; a => "rdi", b => "rsi", c => "rdx", d => "r10", e => "r8", f => "r9");
+
+/// Kernel entry point, replacing crt0. Captures `rsp` (→ `argc`), 16-byte-aligns
+/// the stack, and hands off to [`crate::start::rust_start`], which never returns.
+#[cfg(feature = "rt")]
+#[unsafe(naked)]
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() -> ! {
+    naked_asm!(
+        "xor rbp, rbp",
+        "mov rdi, rsp",
+        "and rsp, -16",
+        "call {start}",
+        start = sym crate::start::rust_start,
+    )
+}
+
+/// Linux/x86-64 syscall numbers.
+pub mod nr {
+    pub const READ: usize = 0;
+    pub const WRITE: usize = 1;
+    pub const CLOSE: usize = 3;
+    pub const LSEEK: usize = 8;
+    pub const MMAP: usize = 9;
+    pub const MUNMAP: usize = 11;
+    pub const GETPID: usize = 39;
+    pub const EXIT: usize = 60;
+    pub const GETTIMEOFDAY: usize = 96;
+    pub const EXIT_GROUP: usize = 231;
+    pub const MKDIRAT: usize = 258;
+    pub const UNLINKAT: usize = 263;
+    pub const OPENAT: usize = 257;
+    pub const GETRANDOM: usize = 318;
+    pub const GETENTROPY: usize = GETRANDOM;
+}
+
+pub const AT_FDCWD: isize = -100;
+
+pub const PROT_READ: usize = 0x1;
+pub const PROT_WRITE: usize = 0x2;
+pub const MAP_PRIVATE: usize = 0x2;
+pub const MAP_ANONYMOUS: usize = 0x20;

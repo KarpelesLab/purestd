@@ -1,0 +1,17 @@
+//! The single `#[panic_handler]` for a `purestd` binary. Gated behind `rt`.
+//!
+//! Prints the message and location to stderr, then exits with status 101 — the
+//! status `std` reports for an unhandled panic — so drop-in programs and their
+//! test harnesses see the value they expect. No unwinding happens (we build
+//! with `panic = "abort"`), so this never touches `_Unwind_*`.
+
+use crate::io::Write;
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    // `PanicInfo`'s Display already includes both the message and location.
+    let mut err = crate::io::stderr();
+    let _ = writeln!(err, "thread 'main' panicked:\n{}", info);
+    crate::rt::exit(101)
+}

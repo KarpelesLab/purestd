@@ -1,0 +1,19 @@
+# Linker flags for building freestanding binaries against purestd.
+#
+# -nostartfiles : do not link the C runtime startup objects (crt1.o etc).
+#                 Our own `_start` is the entry point.
+# -Wl,-e,__start: set the Mach-O entry point to our `_start` symbol.
+#                 (Rust `#[no_mangle] _start` becomes Mach-O symbol `__start`.)
+#
+# libSystem is still listed as a load command (ld64 mandates it), but we make
+# ZERO calls into it — verify with `nm -u <binary>` (empty = pure syscalls).
+
+[target.aarch64-apple-darwin]
+rustflags = [
+    "-C", "link-arg=-nostartfiles",
+    "-C", "link-arg=-Wl,-e,__start",
+    # rustc passes -nodefaultlibs, so libSystem must be requested explicitly.
+    # It provides dyld_stub_binder (required by the Mach-O loader). We still call
+    # nothing from it — see `nm -u`.
+    "-C", "link-arg=-lSystem",
+]
