@@ -1,9 +1,6 @@
 #![no_std]
 #![no_main]
 
-#[path = "common/rt.rs"]
-mod rt;
-
 use purestd::prelude::*;
 use purestd::{collections::HashMap, env, fs, io::Write, path::Path, process, sync::Mutex, time};
 

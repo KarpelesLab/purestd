@@ -17,8 +17,7 @@ static ARGV: AtomicPtr<*const u8> = AtomicPtr::new(ptr::null_mut());
 static ENVP: AtomicPtr<*const u8> = AtomicPtr::new(ptr::null_mut());
 
 /// Record the loader-provided argument and environment vectors. Called once by
-/// the runtime start glue (`__purestd_start`) before user `main`.
-#[cfg_attr(not(feature = "rt"), allow(dead_code))]
+/// the [`entry!`](crate::entry) glue before user `main`.
 pub(crate) unsafe fn init(argc: usize, argv: *const *const u8, envp: *const *const u8) {
     ARGC.store(argc, Ordering::Relaxed);
     ARGV.store(argv as *mut *const u8, Ordering::Relaxed);

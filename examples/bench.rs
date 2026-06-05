@@ -8,9 +8,6 @@
 //! CARGO_PROFILE_RELEASE_OPT_LEVEL=3 cargo run --release --example bench
 //! ```
 
-#[path = "common/rt.rs"]
-mod rt;
-
 use purestd::collections::HashMap;
 use purestd::hash::{Hasher, SipHasher13};
 use purestd::prelude::*;

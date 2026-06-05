@@ -5,82 +5,42 @@ on:
   pull_request:
   workflow_dispatch:
 
+# purestd is just a `no_std` library. Here we build and run its examples the
+# ordinary way — a normal Rust build where libc provides the C runtime — on
+# macOS arm64, Linux x86_64, and Linux aarch64. (The libc-free, fully-static
+# build is the fullrust toolchain's job, exercised in that repo.)
 jobs:
-  # macOS / Apple Silicon — builds with the native ld64 (libSystem present but
-  # never called) and runs every example natively.
-  macos-arm64:
-    runs-on: macos-14
-    steps:
-      - uses: actions/checkout@v6
-      - name: Toolchain
-        run: rustup default stable && rustc -V
-      - name: Build examples
-        run: cargo build --examples
-      - name: Verify purity (no libc imports beyond the loader stub)
-        run: |
-          set -eo pipefail
-          for ex in hello args stdshow mapstress sipcheck threads; do
-            # grep -vc exits 1 when the count is 0 (the good case), so swallow it.
-            n=$(nm -u "target/debug/examples/$ex" | { grep -vc dyld_stub_binder || true; })
-            echo "$ex: $n non-loader imports"
-            test "$n" = "0"
-          done
-      - name: Run & validate
-        shell: bash
-        run: |
-          set -eo pipefail
-          # macOS runners have no `timeout`; examples exit on their own.
-          B=target/debug/examples
-          # Capture output (don't pipe to grep -q: it short-circuits and SIGPIPEs
-          # the producer, which pipefail then flags).
-          check() { local pat="$1"; shift; local out; out="$("$@")"; echo "$out"; grep -q "$pat" <<<"$out"; }
-          check "hello from purestd"     "$B/hello"
-          check "\[3\] c"                "$B/args" a b c
-          check "^ok$"                   "$B/stdshow"
-          check "checks passed"          "$B/mapstress"
-          check "reference vectors match" "$B/sipcheck"
-          check "counter = 80000"        "$B/threads"
-
-  # Linux x86_64 and aarch64 — builds fully-static libc-free ELFs with rust-lld
-  # and runs them natively (this is where the clone+futex thread path is
-  # actually exercised).
-  linux:
+  test:
     strategy:
       fail-fast: false
       matrix:
         include:
+          - runner: macos-14
           - runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
       - name: Toolchain
+        run: rustup default stable && rustc -V
+      - name: Build (lib, default + no-default-features)
         run: |
-          rustup default stable
-          rustup target add ${{ matrix.target }}
-          rustup component add llvm-tools || true
-          rustc -V
-      - name: Build freestanding examples
-        run: TARGET=${{ matrix.target }} scripts/build-linux.sh --all
-      - name: Confirm static & libc-free
-        run: |
-          set -eo pipefail
-          f="target/${{ matrix.target }}/debug/examples/hello"
-          file "$f"
-          file "$f" | grep -q "statically linked"
-          # No dynamic interpreter / NEEDED libs.
-          ! (readelf -d "$f" 2>/dev/null | grep -qE "NEEDED|INTERP")
-      - name: Run & validate (native)
+          cargo build
+          cargo build --no-default-features
+      - name: Build examples
+        run: cargo build --examples
+      - name: Run & validate
         shell: bash
         run: |
           set -eo pipefail
-          B=target/${{ matrix.target }}/debug/examples
-          check() { local pat="$1"; shift; local out; out="$(timeout 60 "$@")"; echo "$out"; grep -q "$pat" <<<"$out"; }
-          check "hello from purestd"     "$B/hello"
-          check "\[3\] c"                "$B/args" a b c
-          check "^ok$"                   "$B/stdshow"
-          check "checks passed"          "$B/mapstress"
+          B=target/debug/examples
+          # Capture output (don't pipe to grep -q: it short-circuits and SIGPIPEs
+          # the producer, which pipefail then flags).
+          check() { local pat="$1"; shift; local out; out="$("$@")"; echo "$out"; grep -q "$pat" <<<"$out"; }
+          check "hello from purestd"      "$B/hello"
+          check "\[3\] c"                 "$B/args" a b c
+          check "^ok$"                    "$B/stdshow"
+          check "checks passed"           "$B/mapstress"
           check "reference vectors match" "$B/sipcheck"
-          check "counter = 80000"        "$B/threads"
+          check "counter = 80000"         "$B/threads"

@@ -13,9 +13,6 @@
 //! streaming `Hasher` path (used whenever a `Hash` impl writes in pieces)
 //! matches the single-shot result. A clean exit 0 means every check passed.
 
-#[path = "common/rt.rs"]
-mod rt;
-
 use purestd::hash::{Hasher, SipHasher13};
 use purestd::prelude::*;
 

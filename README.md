@@ -1,26 +1,18 @@
 # purestd
 
-A **drop-in replacement for Rust's `std` that does not depend on libc.** Every
-operation is a direct kernel syscall — no C library, no C runtime. Built on
-`core` + `alloc`, purestd supplies exactly what a real `std` provides (panic
-handler, global allocator, I/O, the `std`-shaped API) and keeps Rust's
-guarantees intact all the way down to the syscall instruction.
+A **`std` written in pure Rust that never calls libc.** Every operation —
+files, time, env, threads, the allocator — is a direct kernel syscall
+(`svc`/`syscall`). Built on `core` + `alloc`, purestd provides exactly what a
+real `std` provides (the panic handler, the global allocator, I/O, the
+`std`-shaped API) and keeps Rust's guarantees intact all the way down to the
+syscall instruction.
 
-The pieces a libc-free binary *also* needs but which in a hosted build come from
-**crt0 / compiler_builtins / the unwinder** — the process entry point `_start`,
-the `mem*`/unwind/`getauxval` symbols — are deliberately *not* in purestd. Those
-are the toolchain's job: when you build through
-[fullrust](https://github.com/KarpelesLab/fullrust), it supplies them. purestd is
-only `std`.
-
-(The examples in this repo link a tiny test-only stand-in for them,
-[`examples/common/rt.rs`](examples/common/rt.rs), so they can build and run
-standalone for the dev loop and CI.)
-
-It is designed to be [fullrust](https://github.com/KarpelesLab/fullrust)'s
-standard library — programs written against purestd compile, via the fullrust
-toolchain, into real fully-static libc-free binaries — and to be usable on its
-own.
+purestd is *only* `std`. The process entry point (`_start`) and the
+`mem*`/unwind symbols are not its concern — in a normal build they come from
+crt0 and libc, and in a libc-free build from the
+[fullrust](https://github.com/KarpelesLab/fullrust) toolchain. So purestd builds
+and runs fine as an ordinary `no_std` library **with** libc present (which is how
+it's tested here); it simply never *calls* into libc.
 
 **Zero third-party dependencies.** purestd is built on `core` + `alloc` and
 nothing else — it implements its own hash map, hasher, allocator, and OS layer.
@@ -33,53 +25,50 @@ nothing else — it implements its own hash map, hasher, allocator, and OS layer
 use purestd::prelude::*;
 
 fn main() {
-    println!("hello from purestd — no libc");
+    println!("hello from purestd");
 }
 
 purestd::entry!(main);
 ```
 
-Built through fullrust, that's the whole program — the toolchain provides the
-entry point and the `mem*`/unwind symbols.
+`entry!` emits the standard C `main` symbol, so the program is started the
+ordinary way: by crt0 in a normal build, or by the fullrust toolchain in a
+libc-free build. Either caller passes `argc`/`argv`/`envp`, which purestd records
+for [`env`](src/env.rs) before your `main` runs.
 
-## "No libc" — and how it's verified
+## libc or not
 
-* **Linux** binaries are fully static ELFs with **no dynamic interpreter and no
-  libc** at all (`file` reports `statically linked`, no `/lib64/ld`).
-* **macOS** links `libSystem` as a load-command only because `ld64` mandates it;
-  purestd makes **zero calls into it**. `nm -u <binary>` lists only the loader
-  stub `dyld_stub_binder`. The `memcpy`/`memset`/`bzero`/`strlen` it references
-  are resolved by the toolchain (fullrust), not by libc.
+* **As a normal library (how this repo is tested):** an ordinary `cargo build`.
+  libc supplies the C runtime (`_start`, `memcpy`, …); purestd supplies the panic
+  handler, the global allocator, and `rust_eh_personality`, and does all of its
+  *own* work via raw syscalls. The binary links libc but purestd never calls it.
+* **Libc-free / fully static:** build through fullrust, which supplies the entry
+  point and the `mem*`/unwind symbols itself, producing a static binary with no
+  libc at all. That path lives in the fullrust repo, not here.
 
 ## Targets
 
-| Target                         | Status                                   |
-| ------------------------------ | ---------------------------------------- |
-| `aarch64-apple-darwin`         | builds & **runs natively** (dev loop)    |
-| `x86_64-unknown-linux-gnu`     | builds → fully-static libc-free ELF      |
-| `aarch64-unknown-linux-gnu`    | builds → fully-static libc-free ELF      |
+| Target                      | Tested in CI            |
+| --------------------------- | ----------------------- |
+| `aarch64-apple-darwin`      | build + run             |
+| `x86_64-unknown-linux-gnu`  | build + run             |
+| `aarch64-unknown-linux-gnu` | build + run             |
 
 The only architecture/OS-specific code lives in [`src/arch/`](src/arch/): one
-file per target, providing the raw `syscallN` wrappers, the entry point, and the
-syscall number table. Everything above is OS-neutral.
+file per target with the raw `syscallN` wrappers and the syscall number table.
+Everything above it is OS-neutral.
 
 ## Layout
-
-purestd is a single crate — only `std`:
 
 ```
 arch/      raw syscall wrappers + number table (per target)
 syscall    arch-neutral, Result-returning wrappers (Errno)
 allocator  mmap-backed segregated free-list (#[global_allocator])
-panic      the #[panic_handler]
-start      __purestd_start — the lang_start-equivalent runtime glue
-rt         exit/abort + Termination (main may return (), i32, Result)
+panic      the #[panic_handler] + rust_eh_personality
+rt         exit/abort + Termination + the entry! glue
 io fs env process time sync path ffi error net thread   ← the std surface
+hash collections   ← own SipHash-1-3 + HashMap/HashSet
 ```
-
-The process entry point and `mem*`/unwind/`getauxval` symbols are not here —
-fullrust provides them (the examples use a test stand-in,
-`examples/common/rt.rs`).
 
 `core` and `alloc` are re-exported under `std`-shaped paths (`mem`, `cmp`,
 `fmt`, `vec`, `collections`, …), so when purestd is aliased as `std` for a
@@ -89,24 +78,16 @@ freestanding target, ordinary `use std::io::Write;` / `std::fs::read(..)` /
 ## The `rt` feature (default on)
 
 Gates the std-provided *policy* symbols — the `#[panic_handler]`, the
-`#[global_allocator]` static, and the `lang_start`-equivalent runtime glue
-(`__purestd_start`). Disable it (`default-features = false`) when a host runtime
-supplies those instead. The *mechanisms* (syscalls, the allocator type, the
-`std` surface) are always available.
+`#[global_allocator]` static, and `rust_eh_personality`. Disable it
+(`default-features = false`) when a host runtime supplies those instead. The
+*mechanisms* (syscalls, the allocator type, the `std` surface) are always
+available.
 
 ## Building
 
-Native (macOS, runs immediately):
-
 ```sh
-cargo run --example stdshow -- some args
-```
-
-Fully-static libc-free Linux ELF (cross-compiled from macOS via rust-lld):
-
-```sh
-scripts/build-linux.sh stdshow x86_64
-scripts/build-linux.sh stdshow aarch64
+cargo run --example stdshow -- some args   # any example, normal build
+cargo build --examples
 ```
 
 ## Status
@@ -120,8 +101,8 @@ verified against the canonical reference vectors — `cargo run --example sipche
 
 Threads are real OS threads: `thread::spawn`/`JoinHandle::join`/`Builder`,
 `sleep`, `yield_now`, futex-based join. On macOS they use Mach
-`thread_create_running` (no libc, no libpthread — see `docs/macos-threads.md`)
-and run natively; on Linux they use `clone` + `futex` (compile-verified).
+`thread_create_running` (no libpthread — see [`docs/macos-threads.md`](docs/macos-threads.md));
+on Linux they use `clone` + `futex`. Exercised on every target in CI.
 
 Not yet: `process::Command`, sockets (`net`), buffered readers/writers, TLS,
 thread names/parking. `net` is a compiling placeholder.

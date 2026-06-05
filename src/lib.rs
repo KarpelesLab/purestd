@@ -29,12 +29,13 @@
 //!
 //! ## Scope: purestd is *only* `std`
 //!
-//! purestd provides exactly what a real `std` provides. The lower-level pieces a
-//! libc-free binary also needs — the process entry point `_start` and the
-//! `mem*`/unwind/`getauxval` symbols — come from **crt0** and
-//! **compiler_builtins** in a hosted build, not from std, so they live in the
-//! separate [`purert`](https://docs.rs/purert) runtime crate. A program links
-//! both (`extern crate purert;`).
+//! purestd provides exactly what a real `std` provides — and nothing a hosted
+//! `std` doesn't. The process entry point (`_start`) and the `mem*`/unwind
+//! symbols are *not* its concern: in a normal build they come from crt0 and
+//! libc, and in a libc-free build from the fullrust toolchain. As a result
+//! purestd builds and runs fine as an ordinary `no_std` library **with** libc
+//! (which is how the examples here are tested) — it simply never *calls* libc,
+//! doing all its own work through raw syscalls.
 //!
 //! ## `rt` feature (default)
 //!
@@ -79,14 +80,13 @@ mod sys_thread;
 
 pub use syscall::Errno;
 
-// The std-provided policy symbols (panic handler, global allocator, and the
-// `lang_start`-equivalent runtime glue), behind the default `rt` feature. The
-// process entry point and the mem*/unwind intrinsics are NOT here — like crt0
-// and compiler_builtins in a hosted build, they live in the `purert` crate.
+// The std-provided policy symbols — the `#[panic_handler]`, the
+// `#[global_allocator]` static, and `rust_eh_personality` — behind the default
+// `rt` feature. The process entry point (`_start`) and the `mem*`/unwind
+// intrinsics are NOT here: in a normal build they come from crt0/libc/the
+// unwinder, and in a libc-free build from the fullrust toolchain.
 #[cfg(feature = "rt")]
 mod panic;
-#[cfg(feature = "rt")]
-mod start;
 
 // ---------------------------------------------------------------------------
 // `std`-shaped re-exports of `core` + `alloc`, so the many `std::mem`,

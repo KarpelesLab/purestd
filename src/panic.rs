@@ -15,3 +15,10 @@ fn panic(info: &PanicInfo) -> ! {
     let _ = writeln!(err, "thread 'main' panicked:\n{}", info);
     crate::rt::exit(101)
 }
+
+/// The Rust exception-personality routine. In a hosted build `std` provides this
+/// (the C `_Unwind_*` routines come from the unwinder); we build with
+/// `panic = "abort"`, so it is referenced by precompiled `alloc` but never
+/// called. An empty stub satisfies the linker.
+#[unsafe(no_mangle)]
+extern "C" fn rust_eh_personality() {}

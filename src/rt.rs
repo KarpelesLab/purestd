@@ -5,6 +5,22 @@
 
 use crate::syscall;
 
+/// The entry shim called by the [`entry!`](crate::entry) macro's `main`.
+///
+/// Records the loader-provided argument/environment vectors, runs the user
+/// `main`, and converts its return value into an exit code. The analogue of
+/// `std`'s `lang_start`.
+#[doc(hidden)]
+pub unsafe fn __entry<T: Termination>(
+    argc: usize,
+    argv: *const *const u8,
+    envp: *const *const u8,
+    main: fn() -> T,
+) -> i32 {
+    crate::env::init(argc, argv, envp);
+    main().report()
+}
+
 /// Exit the process with `code`. Never returns.
 #[inline]
 pub fn exit(code: i32) -> ! {

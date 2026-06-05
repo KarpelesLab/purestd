@@ -32,9 +32,14 @@ macro_rules! eprintln {
 
 /// Define the program entry point.
 ///
-/// Generates the C-ABI symbol `__purestd_main` that the runtime `_start` calls.
-/// The function may return `()`, `i32`, or `Result<_, E: Debug>` — exactly as
-/// `fn main` may with real `std`.
+/// Generates the standard C `main(argc, argv, envp)` symbol, so the program is
+/// started the ordinary way — by the C runtime's `_start` (crt0) in a normal
+/// build, or by the fullrust toolchain's equivalent in a libc-free build. Either
+/// caller passes the argument/environment vectors, which are recorded for
+/// [`crate::env`] before your `main` runs.
+///
+/// Your `fn main` may return `()`, `i32`, or `Result<_, E: Debug>` — exactly as
+/// with real `std`.
 ///
 /// ```ignore
 /// #![no_std]
@@ -42,16 +47,22 @@ macro_rules! eprintln {
 /// use purestd::prelude::*;
 ///
 /// fn main() {
-///     println!("hello, libc-free world");
+///     println!("hello from purestd");
 /// }
 /// purestd::entry!(main);
 /// ```
 #[macro_export]
 macro_rules! entry {
     ($main:path) => {
-        #[unsafe(no_mangle)]
-        pub extern "C" fn __purestd_main() -> i32 {
-            $crate::rt::Termination::report($main())
+        // `export_name` (not a `fn main` item) so this doesn't collide with the
+        // user's `fn main`, while still emitting the C `main` symbol crt0 wants.
+        #[export_name = "main"]
+        pub extern "C" fn __purestd_main(
+            argc: ::core::ffi::c_int,
+            argv: *const *const u8,
+            envp: *const *const u8,
+        ) -> ::core::ffi::c_int {
+            unsafe { $crate::rt::__entry(argc as usize, argv, envp, $main) as ::core::ffi::c_int }
         }
     };
 }

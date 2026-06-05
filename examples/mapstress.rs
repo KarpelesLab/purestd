@@ -5,9 +5,6 @@
 //! tombstone reuse, string keys, and entry counting. Aborts (panics) on any
 //! invariant violation, so a clean exit 0 means all checks passed.
 
-#[path = "common/rt.rs"]
-mod rt;
-
 use purestd::collections::{HashMap, HashSet};
 use purestd::prelude::*;
 

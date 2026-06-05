@@ -1,19 +1,17 @@
-# Linker flags for building freestanding binaries against purestd.
+# purestd is `#![no_std]`, so rustc links it freestanding (`-nodefaultlibs`) by
+# default. For ordinary testing we want a normal build where the C runtime
+# provides the entry point (`_start`/crt0) and `memcpy`/etc. (libc) — purestd
+# itself still does all its work through raw syscalls. `default-linker-libraries`
+# re-enables that normal libc link.
 #
-# -nostartfiles : do not link the C runtime startup objects (crt1.o etc).
-#                 Our own `_start` is the entry point.
-# -Wl,-e,__start: set the Mach-O entry point to our `_start` symbol.
-#                 (Rust `#[no_mangle] _start` becomes Mach-O symbol `__start`.)
-#
-# libSystem is still listed as a load command (ld64 mandates it), but we make
-# ZERO calls into it — verify with `nm -u <binary>` (empty = pure syscalls).
+# This is just how the *examples* are built for the dev loop and CI. A libc-free,
+# fully-static build is the fullrust toolchain's job, not this config's.
 
 [target.aarch64-apple-darwin]
-rustflags = [
-    "-C", "link-arg=-nostartfiles",
-    "-C", "link-arg=-Wl,-e,__start",
-    # rustc passes -nodefaultlibs, so libSystem must be requested explicitly.
-    # It provides dyld_stub_binder (required by the Mach-O loader). We still call
-    # nothing from it — see `nm -u`.
-    "-C", "link-arg=-lSystem",
-]
+rustflags = ["-Cdefault-linker-libraries=yes"]
+
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-Cdefault-linker-libraries=yes"]
+
+[target.aarch64-unknown-linux-gnu]
+rustflags = ["-Cdefault-linker-libraries=yes"]

@@ -1,8 +1,6 @@
 #![no_std]
 #![no_main]
 
-#[path = "common/rt.rs"]
-mod rt;
 use purestd::prelude::*;
 use purestd::env;
 
