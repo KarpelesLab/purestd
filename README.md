@@ -109,7 +109,8 @@ socket syscalls, with name resolution from `/etc/hosts` plus plain DNS
 (`/etc/resolv.conf`, A/AAAA over UDP) — no NSS.
 
 Not yet: `process::Command`, buffered readers/writers, TLS, `Condvar`,
-thread names/parking.
+thread names/parking. The path from here to full `std` parity — phased, with the
+known hard problems — is in [`ROADMAP.md`](ROADMAP.md).
 
 ## License
 
