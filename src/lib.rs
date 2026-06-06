@@ -75,6 +75,7 @@ pub mod path;
 pub mod process;
 pub mod sync;
 pub mod thread;
+pub mod tls;
 pub mod time;
 
 mod sys_thread;

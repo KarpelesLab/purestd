@@ -666,3 +666,16 @@ pub fn num_cpus() -> usize {
         }
     }
 }
+
+/// The current kernel thread id (`gettid` on Linux, `thread_selfid` on macOS).
+#[inline]
+pub fn gettid() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        unsafe { arch::syscall0(nr::THREAD_SELFID) as u64 }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        unsafe { arch::syscall0(nr::GETTID) as u64 }
+    }
+}

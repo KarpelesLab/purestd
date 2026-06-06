@@ -208,7 +208,7 @@ impl Thread {
 pub fn current() -> Thread {
     Thread {
         name: None,
-        id: ThreadId(0),
+        id: ThreadId(crate::syscall::gettid()),
     }
 }
 
