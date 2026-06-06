@@ -108,9 +108,13 @@ on Linux they use `clone` + `futex`. Exercised on every target in CI.
 socket syscalls, with name resolution from `/etc/hosts` plus plain DNS
 (`/etc/resolv.conf`, A/AAAA over UDP) — no NSS.
 
-Not yet: `process::Command`, buffered readers/writers, TLS, `Condvar`,
-thread names/parking. The path from here to full `std` parity — phased, with the
-known hard problems — is in [`ROADMAP.md`](ROADMAP.md).
+The parity-critical `std` surface is implemented and exercised in CI on macOS
+arm64 and Linux x86_64/aarch64: `io`/`fs`/`env`/`process` (incl.
+`process::Command`), `time`, `sync` (all locks futex-backed, `Condvar`,
+`mpsc`, …), `thread` (incl. `scope` and `park`/`unpark`), `thread_local!`,
+`net`, `path`, `collections`, and `os::fd`/`os::unix`. What remains is optional
+hardening and platform breadth (OS-level thread names, TLS destructors, DNS
+hardening, more targets) — none of it blocks aliasing `purestd` as `std`.
 
 ## License
 
