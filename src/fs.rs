@@ -37,6 +37,22 @@ impl File {
     pub fn as_raw_fd(&self) -> i32 {
         self.fd
     }
+
+    /// Truncate or extend the file to `size` bytes.
+    pub fn set_len(&self, size: u64) -> io::Result<()> {
+        syscall::ftruncate(self.fd, size).map_err(Error::from)
+    }
+
+    /// Flush all in-memory data and metadata to disk.
+    pub fn sync_all(&self) -> io::Result<()> {
+        syscall::fsync(self.fd).map_err(Error::from)
+    }
+
+    /// Flush in-memory data to disk. (We don't split data/metadata; same as
+    /// `sync_all`.)
+    pub fn sync_data(&self) -> io::Result<()> {
+        syscall::fsync(self.fd).map_err(Error::from)
+    }
 }
 
 impl Drop for File {
@@ -57,6 +73,12 @@ impl Write for File {
     }
     fn flush(&mut self) -> io::Result<()> {
         Ok(())
+    }
+}
+
+impl io::Seek for File {
+    fn seek(&mut self, pos: io::SeekFrom) -> io::Result<u64> {
+        io::Seek::seek(&mut io::Fd(self.fd), pos)
     }
 }
 

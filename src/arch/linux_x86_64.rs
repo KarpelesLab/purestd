@@ -72,6 +72,17 @@ pub mod nr {
     pub const RECVFROM: usize = 45;
     pub const SHUTDOWN: usize = 48;
     pub const SETSOCKOPT: usize = 54;
+    pub const GETSOCKOPT: usize = 55;
+    pub const CLOCK_GETTIME: usize = 228;
+    pub const FTRUNCATE: usize = 77;
+    pub const FSYNC: usize = 74;
+    pub const RENAME: usize = 82;
+    pub const FSTAT: usize = 5;
+    pub const NEWFSTATAT: usize = 262;
+    pub const GETDENTS64: usize = 217;
+    pub const CHDIR: usize = 80;
+    pub const GETCWD: usize = 79;
+    pub const NANOSLEEP_LX: usize = 35;
 }
 
 pub const AT_FDCWD: isize = -100;

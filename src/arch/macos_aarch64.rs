@@ -36,7 +36,16 @@ pub mod nr {
     pub const SENDTO: usize = C | 133;
     pub const RECVFROM: usize = C | 29;
     pub const SETSOCKOPT: usize = C | 105;
+    pub const GETSOCKOPT: usize = C | 118;
     pub const SHUTDOWN: usize = C | 134;
+    pub const FTRUNCATE: usize = C | 201;
+    pub const FSYNC: usize = C | 95;
+    pub const RENAMEAT: usize = C | 465;
+    pub const FSTAT: usize = C | 339;
+    pub const FSTATAT: usize = C | 469;
+    pub const GETDIRENTRIES64: usize = C | 344;
+    pub const CHDIR: usize = C | 12;
+    pub const GETCWD: usize = C | 326;
     /// Darwin has no thread groups; map the Linux name to plain `exit`.
     pub const EXIT_GROUP: usize = EXIT;
     /// Linux has a dedicated `getrandom`; Darwin uses `getentropy`.

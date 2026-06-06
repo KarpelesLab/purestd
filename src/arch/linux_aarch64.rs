@@ -99,7 +99,16 @@ pub mod nr {
     pub const SENDTO: usize = 206;
     pub const RECVFROM: usize = 207;
     pub const SETSOCKOPT: usize = 208;
+    pub const GETSOCKOPT: usize = 209;
     pub const SHUTDOWN: usize = 210;
+    pub const FTRUNCATE: usize = 46;
+    pub const FSYNC: usize = 82;
+    pub const RENAMEAT: usize = 38;
+    pub const FSTAT: usize = 80;
+    pub const NEWFSTATAT: usize = 79;
+    pub const GETDENTS64: usize = 61;
+    pub const CHDIR: usize = 49;
+    pub const GETCWD: usize = 17;
 }
 
 pub const AT_FDCWD: isize = -100;

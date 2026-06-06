@@ -45,3 +45,4 @@ jobs:
           check "reference vectors match" "$B/sipcheck"
           check "counter = 80000"         "$B/threads"
           check "net: OK"                 "$B/net"
+          check "io_test: OK"             "$B/io_test"

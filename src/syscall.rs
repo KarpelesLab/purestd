@@ -104,6 +104,59 @@ pub fn getpid() -> u32 {
     unsafe { arch::syscall0(nr::GETPID) as u32 }
 }
 
+// ---- seek / file size ----
+pub const SEEK_SET: i32 = 0;
+pub const SEEK_CUR: i32 = 1;
+pub const SEEK_END: i32 = 2;
+
+/// `lseek(fd, offset, whence)` -> resulting absolute offset.
+#[inline]
+pub fn lseek(fd: i32, offset: i64, whence: i32) -> Result<u64, Errno> {
+    from_ret(unsafe { arch::syscall3(nr::LSEEK, fd as usize, offset as usize, whence as usize) })
+        .map(|o| o as u64)
+}
+
+/// `ftruncate(fd, len)`.
+#[inline]
+pub fn ftruncate(fd: i32, len: u64) -> Result<(), Errno> {
+    from_ret(unsafe { arch::syscall2(nr::FTRUNCATE, fd as usize, len as usize) }).map(|_| ())
+}
+
+/// `fsync(fd)`.
+#[inline]
+pub fn fsync(fd: i32) -> Result<(), Errno> {
+    from_ret(unsafe { arch::syscall1(nr::FSYNC, fd as usize) }).map(|_| ())
+}
+
+/// Monotonic clock as `(seconds, nanoseconds)`.
+///
+/// On Linux this is `clock_gettime(CLOCK_MONOTONIC)`. On macOS/arm64 it reads
+/// the architectural counter (`CNTVCT_EL0`/`CNTFRQ_EL0`) directly — the same
+/// source `mach_absolute_time` uses — since there is no stable `clock_gettime`
+/// syscall there.
+#[inline]
+pub fn monotonic() -> (u64, u32) {
+    #[cfg(target_os = "linux")]
+    {
+        let mut ts = [0i64; 2]; // struct timespec { i64 tv_sec; i64 tv_nsec; }
+        let _ = unsafe { arch::syscall2(nr::CLOCK_GETTIME, 1, ts.as_mut_ptr() as usize) };
+        (ts[0] as u64, ts[1] as u32)
+    }
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+    {
+        let (cnt, freq): (u64, u64);
+        unsafe {
+            core::arch::asm!("mrs {}, cntvct_el0", out(reg) cnt, options(nomem, nostack));
+            core::arch::asm!("mrs {}, cntfrq_el0", out(reg) freq, options(nomem, nostack));
+        }
+        // nanos = cnt * 1e9 / freq, computed as (whole seconds, remainder ns).
+        let secs = cnt / freq;
+        let rem = cnt % freq;
+        let nanos = (rem as u128 * 1_000_000_000 / freq as u128) as u32;
+        (secs, nanos)
+    }
+}
+
 /// Fill `buf` with cryptographically-secure random bytes from the kernel.
 ///
 /// Uses `getrandom` on Linux and `getentropy` on macOS (which caps each call at
