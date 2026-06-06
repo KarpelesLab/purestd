@@ -51,3 +51,4 @@ jobs:
           check "proctest: OK"            "$B/proctest"
           check "misc_test: OK"           "$B/misc_test"
           check "tlstest: OK"             "$B/tlstest"
+          check "scopetest: OK"           "$B/scopetest"

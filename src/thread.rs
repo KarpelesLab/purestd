@@ -14,7 +14,8 @@ use crate::sys_thread;
 use crate::time::Duration;
 use core::any::Any;
 use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicU32, Ordering};
+use core::marker::PhantomData;
+use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 
 const DEFAULT_STACK: usize = 2 * 1024 * 1024;
 
@@ -217,4 +218,106 @@ pub fn available_parallelism() -> crate::io::Result<core::num::NonZeroUsize> {
     let n = crate::syscall::num_cpus();
     core::num::NonZeroUsize::new(n)
         .ok_or_else(|| crate::io::Error::from(crate::io::ErrorKind::Other))
+}
+
+// ---------------------------------------------------------------------------
+// Scoped threads
+// ---------------------------------------------------------------------------
+
+struct ScopeData {
+    running: AtomicUsize, // count of scoped threads not yet finished
+    wake: AtomicU32,      // futex word the parent waits on
+}
+
+/// A scope for spawning threads that may borrow from the enclosing stack.
+/// Drop-in for `std::thread::Scope`.
+pub struct Scope<'scope, 'env: 'scope> {
+    data: ScopeData,
+    _scope: PhantomData<&'scope mut &'scope ()>,
+    _env: PhantomData<&'env mut &'env ()>,
+}
+
+/// Handle to a scoped thread. Drop-in for `std::thread::ScopedJoinHandle`.
+pub struct ScopedJoinHandle<'scope, T> {
+    handle: JoinHandle<()>,
+    slot: *mut Option<T>,
+    _p: PhantomData<&'scope ()>,
+}
+impl<'scope, T> ScopedJoinHandle<'scope, T> {
+    pub fn join(self) -> Result<T> {
+        // Move the inner handle out without running this handle's (absent) Drop.
+        let handle = unsafe { core::ptr::read(&self.handle) };
+        let slot = self.slot;
+        core::mem::forget(self);
+        handle.join()?;
+        // SAFETY: the thread finished, so the slot is written and unaliased.
+        let value = unsafe { (*slot).take() };
+        unsafe { drop(Box::from_raw(slot)) };
+        Ok(value.expect("scoped thread finished without a result"))
+    }
+    pub fn is_finished(&self) -> bool {
+        self.handle.is_finished()
+    }
+}
+
+impl<'scope, 'env> Scope<'scope, 'env> {
+    pub fn spawn<F, T>(&'scope self, f: F) -> ScopedJoinHandle<'scope, T>
+    where
+        F: FnOnce() -> T + Send + 'scope,
+        T: Send + 'scope,
+    {
+        self.data.running.fetch_add(1, Ordering::Relaxed);
+        let data = &self.data as *const ScopeData as usize;
+        let slot: *mut Option<T> = Box::into_raw(Box::new(None));
+        let slot_usize = slot as usize;
+
+        // Returns `()`, so `T` never crosses the `'static` spawn boundary.
+        let wrapped = move || {
+            let r = f();
+            // SAFETY: this thread owns the slot until it writes the result.
+            unsafe { *(slot_usize as *mut Option<T>) = Some(r) };
+            // SAFETY: `scope()` outlives all its threads, so `data` is valid.
+            let data = unsafe { &*(data as *const ScopeData) };
+            if data.running.fetch_sub(1, Ordering::AcqRel) == 1 {
+                data.wake.store(1, Ordering::Release);
+                sys_thread::futex_wake(&data.wake);
+            }
+        };
+
+        // Erase the 'scope lifetime to 'static; sound because `scope()` joins
+        // every spawned thread before returning (so before borrowed data dies).
+        let boxed: Box<dyn FnOnce() + Send + 'scope> = Box::new(wrapped);
+        let boxed: Box<dyn FnOnce() + Send + 'static> = unsafe { core::mem::transmute(boxed) };
+
+        let handle = Builder::new()
+            .spawn(move || boxed())
+            .expect("failed to spawn scoped thread");
+        ScopedJoinHandle {
+            handle,
+            slot,
+            _p: PhantomData,
+        }
+    }
+}
+
+/// Create a scope for spawning scoped threads. Drop-in for `std::thread::scope`.
+pub fn scope<'env, F, T>(f: F) -> T
+where
+    F: for<'scope> FnOnce(&'scope Scope<'scope, 'env>) -> T,
+{
+    let scope = Scope {
+        data: ScopeData {
+            running: AtomicUsize::new(0),
+            wake: AtomicU32::new(0),
+        },
+        _scope: PhantomData,
+        _env: PhantomData,
+    };
+    let result = f(&scope);
+    // Wait until every scoped thread has finished.
+    while scope.data.running.load(Ordering::Acquire) != 0 {
+        sys_thread::futex_wait(&scope.data.wake, 0);
+        scope.data.wake.store(0, Ordering::Relaxed);
+    }
+    result
 }
