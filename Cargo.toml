@@ -1,6 +1,6 @@
 [package]
 name = "purestd"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2021"
 rust-version = "1.85"
 description = "A pure-Rust standard library replacement that talks to the kernel via raw syscalls only — no libc."
