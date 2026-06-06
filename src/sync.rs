@@ -1,16 +1,17 @@
-//! `std::sync` subset: `Mutex`, `RwLock`, `Once`, `OnceLock`, plus `Arc`/`Weak`
-//! re-exported from `alloc` and the `atomic` module from `core`.
+//! `std::sync`: `Mutex` (futex-backed), `RwLock`, `Once`, `OnceLock`, `Condvar`,
+//! `Barrier`, `LazyLock`, and the `mpsc` channel — plus `Arc`/`Weak` from
+//! `alloc` and the `atomic` module from `core`.
 //!
-//! The locks are spin-based. With no real threads yet (M6 brings clone/futex)
-//! this is correct and `Sync`; it will be upgraded to futex-backed blocking when
-//! threads land.
+//! `Mutex` and `Condvar` block in the kernel via the futex (`futex` on Linux,
+//! `__ulock` on macOS). `RwLock` is still a spin lock (a futex version is on the
+//! roadmap).
 
 pub use crate::alloc::sync::{Arc, Weak};
 pub use core::sync::atomic;
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{AtomicIsize, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicIsize, AtomicU32, AtomicU8, Ordering};
 
 /// Sentinel poison error. These locks never poison (panics abort the process),
 /// so this is constructed only to satisfy the `std` return-type shape.
@@ -54,9 +55,13 @@ pub type TryLockResult<G> = Result<G, TryLockError<G>>;
 // Mutex
 // ---------------------------------------------------------------------------
 
-/// A spin-based mutual-exclusion lock. Drop-in for `std::sync::Mutex`.
+/// A futex-backed mutual-exclusion lock. Drop-in for `std::sync::Mutex`.
+///
+/// State: 0 = unlocked, 1 = locked (no waiters), 2 = locked with waiters. The
+/// uncontended path is a single CAS; contention blocks in the kernel via the
+/// futex (`futex` on Linux, `__ulock` on macOS) rather than spinning.
 pub struct Mutex<T: ?Sized> {
-    locked: AtomicU8,
+    state: AtomicU32,
     data: UnsafeCell<T>,
 }
 
@@ -66,7 +71,7 @@ unsafe impl<T: ?Sized + Send> Sync for Mutex<T> {}
 impl<T> Mutex<T> {
     pub const fn new(value: T) -> Mutex<T> {
         Mutex {
-            locked: AtomicU8::new(0),
+            state: AtomicU32::new(0),
             data: UnsafeCell::new(value),
         }
     }
@@ -76,20 +81,37 @@ impl<T> Mutex<T> {
 }
 
 impl<T: ?Sized> Mutex<T> {
-    pub fn lock(&self) -> LockResult<MutexGuard<'_, T>> {
-        while self
-            .locked
-            .compare_exchange_weak(0, 1, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
+    fn raw_lock(&self) {
+        if self
+            .state
+            .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
         {
-            core::hint::spin_loop();
+            return;
         }
+        // Contended: mark as "locked with waiters" and block until released.
+        loop {
+            if self.state.swap(2, Ordering::Acquire) == 0 {
+                return;
+            }
+            crate::sys_thread::futex_wait(&self.state, 2);
+        }
+    }
+
+    fn raw_unlock(&self) {
+        if self.state.swap(0, Ordering::Release) == 2 {
+            crate::sys_thread::futex_wake(&self.state);
+        }
+    }
+
+    pub fn lock(&self) -> LockResult<MutexGuard<'_, T>> {
+        self.raw_lock();
         Ok(MutexGuard { lock: self })
     }
 
     pub fn try_lock(&self) -> TryLockResult<MutexGuard<'_, T>> {
         if self
-            .locked
+            .state
             .compare_exchange(0, 1, Ordering::Acquire, Ordering::Relaxed)
             .is_ok()
         {
@@ -121,7 +143,7 @@ impl<T: ?Sized> DerefMut for MutexGuard<'_, T> {
 }
 impl<T: ?Sized> Drop for MutexGuard<'_, T> {
     fn drop(&mut self) {
-        self.lock.locked.store(0, Ordering::Release);
+        self.lock.raw_unlock();
     }
 }
 
@@ -306,5 +328,292 @@ impl<T> OnceLock<T> {
 impl<T> Default for OnceLock<T> {
     fn default() -> Self {
         OnceLock::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Condvar
+// ---------------------------------------------------------------------------
+
+/// A condition variable. Drop-in for `std::sync::Condvar`.
+///
+/// Futex-backed via a sequence counter: `wait` reads the sequence under the
+/// mutex, drops the mutex, and blocks until the sequence changes; `notify_*`
+/// bumps the sequence and wakes waiters. Spurious wakeups are possible, so use
+/// it in the usual `while !condition { guard = cv.wait(guard)? }` loop.
+pub struct Condvar {
+    seq: AtomicU32,
+}
+
+impl Condvar {
+    pub const fn new() -> Condvar {
+        Condvar {
+            seq: AtomicU32::new(0),
+        }
+    }
+
+    pub fn wait<'a, T>(&self, guard: MutexGuard<'a, T>) -> LockResult<MutexGuard<'a, T>> {
+        let seq = self.seq.load(Ordering::Acquire);
+        let mutex: &Mutex<T> = guard.lock;
+        // Release the mutex without running the guard's Drop (we re-lock below).
+        mutex.raw_unlock();
+        core::mem::forget(guard);
+        crate::sys_thread::futex_wait(&self.seq, seq);
+        mutex.raw_lock();
+        Ok(MutexGuard { lock: mutex })
+    }
+
+    pub fn wait_while<'a, T, F>(
+        &self,
+        mut guard: MutexGuard<'a, T>,
+        mut condition: F,
+    ) -> LockResult<MutexGuard<'a, T>>
+    where
+        F: FnMut(&mut T) -> bool,
+    {
+        while condition(&mut guard) {
+            guard = self.wait(guard)?;
+        }
+        Ok(guard)
+    }
+
+    pub fn notify_one(&self) {
+        self.seq.fetch_add(1, Ordering::Release);
+        crate::sys_thread::futex_wake(&self.seq);
+    }
+
+    pub fn notify_all(&self) {
+        self.seq.fetch_add(1, Ordering::Release);
+        crate::sys_thread::futex_wake_all(&self.seq);
+    }
+}
+
+impl Default for Condvar {
+    fn default() -> Self {
+        Condvar::new()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Barrier
+// ---------------------------------------------------------------------------
+
+/// A synchronization point for a fixed number of threads. Drop-in for
+/// `std::sync::Barrier`.
+pub struct Barrier {
+    state: Mutex<BarrierState>,
+    cv: Condvar,
+    n: usize,
+}
+struct BarrierState {
+    count: usize,
+    generation: usize,
+}
+
+/// Returned by [`Barrier::wait`].
+pub struct BarrierWaitResult(bool);
+impl BarrierWaitResult {
+    pub fn is_leader(&self) -> bool {
+        self.0
+    }
+}
+
+impl Barrier {
+    pub fn new(n: usize) -> Barrier {
+        Barrier {
+            state: Mutex::new(BarrierState {
+                count: 0,
+                generation: 0,
+            }),
+            cv: Condvar::new(),
+            n,
+        }
+    }
+
+    pub fn wait(&self) -> BarrierWaitResult {
+        let mut state = self.state.lock().unwrap();
+        let gen = state.generation;
+        state.count += 1;
+        if state.count < self.n {
+            while gen == state.generation {
+                state = self.cv.wait(state).unwrap();
+            }
+            BarrierWaitResult(false)
+        } else {
+            state.count = 0;
+            state.generation = state.generation.wrapping_add(1);
+            self.cv.notify_all();
+            BarrierWaitResult(true)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// LazyLock
+// ---------------------------------------------------------------------------
+
+/// A value initialized on first access. Drop-in for `std::sync::LazyLock`.
+pub struct LazyLock<T, F = fn() -> T> {
+    once: Once,
+    value: UnsafeCell<Option<T>>,
+    init: UnsafeCell<Option<F>>,
+}
+unsafe impl<T: Sync + Send, F: Send> Sync for LazyLock<T, F> {}
+
+impl<T, F: FnOnce() -> T> LazyLock<T, F> {
+    pub const fn new(f: F) -> LazyLock<T, F> {
+        LazyLock {
+            once: Once::new(),
+            value: UnsafeCell::new(None),
+            init: UnsafeCell::new(Some(f)),
+        }
+    }
+    pub fn force(this: &LazyLock<T, F>) -> &T {
+        this.once.call_once(|| {
+            let f = unsafe { (*this.init.get()).take().unwrap() };
+            unsafe { *this.value.get() = Some(f()) };
+        });
+        unsafe { (*this.value.get()).as_ref().unwrap() }
+    }
+}
+
+impl<T, F: FnOnce() -> T> Deref for LazyLock<T, F> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        LazyLock::force(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// mpsc — multi-producer, single-consumer channels
+// ---------------------------------------------------------------------------
+
+/// `std::sync::mpsc` — a futex/condvar-backed unbounded channel.
+pub mod mpsc {
+    use super::{Condvar, Mutex};
+    use crate::alloc::collections::VecDeque;
+    use crate::alloc::sync::Arc;
+    use core::fmt;
+    use core::sync::atomic::{AtomicUsize, Ordering};
+
+    struct Shared<T> {
+        queue: Mutex<VecDeque<T>>,
+        cv: Condvar,
+        senders: AtomicUsize,
+        receiver_gone: core::sync::atomic::AtomicBool,
+    }
+
+    /// The sending half of a channel.
+    pub struct Sender<T> {
+        shared: Arc<Shared<T>>,
+    }
+    /// The receiving half of a channel.
+    pub struct Receiver<T> {
+        shared: Arc<Shared<T>>,
+    }
+
+    /// Error returned by [`Sender::send`] when the receiver is gone.
+    pub struct SendError<T>(pub T);
+    impl<T> fmt::Debug for SendError<T> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("SendError(..)")
+        }
+    }
+    /// Error returned by [`Receiver::recv`] when all senders are gone.
+    #[derive(Debug)]
+    pub struct RecvError;
+    /// Error returned by [`Receiver::try_recv`].
+    #[derive(Debug, PartialEq, Eq)]
+    pub enum TryRecvError {
+        Empty,
+        Disconnected,
+    }
+
+    /// Create an unbounded channel.
+    pub fn channel<T>() -> (Sender<T>, Receiver<T>) {
+        let shared = Arc::new(Shared {
+            queue: Mutex::new(VecDeque::new()),
+            cv: Condvar::new(),
+            senders: AtomicUsize::new(1),
+            receiver_gone: core::sync::atomic::AtomicBool::new(false),
+        });
+        (
+            Sender {
+                shared: shared.clone(),
+            },
+            Receiver { shared },
+        )
+    }
+
+    impl<T> Sender<T> {
+        pub fn send(&self, t: T) -> Result<(), SendError<T>> {
+            if self.shared.receiver_gone.load(Ordering::Acquire) {
+                return Err(SendError(t));
+            }
+            self.shared.queue.lock().unwrap().push_back(t);
+            self.shared.cv.notify_one();
+            Ok(())
+        }
+    }
+    impl<T> Clone for Sender<T> {
+        fn clone(&self) -> Sender<T> {
+            self.shared.senders.fetch_add(1, Ordering::Relaxed);
+            Sender {
+                shared: self.shared.clone(),
+            }
+        }
+    }
+    impl<T> Drop for Sender<T> {
+        fn drop(&mut self) {
+            if self.shared.senders.fetch_sub(1, Ordering::AcqRel) == 1 {
+                // Last sender gone — wake any blocked receiver.
+                self.shared.cv.notify_all();
+            }
+        }
+    }
+
+    impl<T> Receiver<T> {
+        pub fn try_recv(&self) -> Result<T, TryRecvError> {
+            let mut q = self.shared.queue.lock().unwrap();
+            if let Some(v) = q.pop_front() {
+                Ok(v)
+            } else if self.shared.senders.load(Ordering::Acquire) == 0 {
+                Err(TryRecvError::Disconnected)
+            } else {
+                Err(TryRecvError::Empty)
+            }
+        }
+
+        pub fn recv(&self) -> Result<T, RecvError> {
+            let mut q = self.shared.queue.lock().unwrap();
+            loop {
+                if let Some(v) = q.pop_front() {
+                    return Ok(v);
+                }
+                if self.shared.senders.load(Ordering::Acquire) == 0 {
+                    return Err(RecvError);
+                }
+                q = self.shared.cv.wait(q).unwrap();
+            }
+        }
+
+        pub fn iter(&self) -> Iter<'_, T> {
+            Iter { rx: self }
+        }
+    }
+    impl<T> Drop for Receiver<T> {
+        fn drop(&mut self) {
+            self.shared.receiver_gone.store(true, Ordering::Release);
+        }
+    }
+
+    pub struct Iter<'a, T> {
+        rx: &'a Receiver<T>,
+    }
+    impl<T> Iterator for Iter<'_, T> {
+        type Item = T;
+        fn next(&mut self) -> Option<T> {
+            self.rx.recv().ok()
+        }
     }
 }

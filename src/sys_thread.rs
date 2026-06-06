@@ -180,6 +180,13 @@ mod imp {
         }
     }
 
+    pub fn futex_wake_all(addr: &AtomicU32) {
+        // ULF_WAKE_ALL = 0x100
+        unsafe {
+            svcn!(SYS_ULOCK_WAKE, UL_OP | 0x100, addr as *const _ as usize, 0usize);
+        }
+    }
+
     pub fn sleep(dur: Duration) {
         // ulock_wait with a timeout on a word that never changes acts as a
         // sleep. The timeout is microseconds (u32); loop for long durations.
@@ -323,6 +330,12 @@ mod imp {
         }
     }
 
+    pub fn futex_wake_all(addr: &AtomicU32) {
+        unsafe {
+            arch::syscall3(nr::FUTEX, addr as *const _ as usize, FUTEX_WAKE, i32::MAX as usize);
+        }
+    }
+
     pub fn sleep(dur: Duration) {
         // struct timespec { i64 tv_sec; i64 tv_nsec; }
         let ts = [dur.as_secs() as i64, dur.subsec_nanos() as i64];
@@ -338,4 +351,4 @@ mod imp {
     }
 }
 
-pub use imp::{futex_wait, futex_wake, sleep, spawn_os, thread_exit, yield_now};
+pub use imp::{futex_wait, futex_wake, futex_wake_all, sleep, spawn_os, thread_exit, yield_now};
