@@ -31,7 +31,7 @@ what's implemented and the short list that remains.
 | `error` | ✅ | `core::error::Error` |
 | `collections` | ✅ | own `HashMap`/`HashSet` (+ `retain`/set-ops/entry) + the `alloc` containers |
 | `hash` | ✅ | SipHash-1-3 + `RandomState`, verified vs reference vectors |
-| `thread` | ✅ | `spawn`/`join`/`Builder`, `sleep`/`yield_now`, `scope`, `available_parallelism`, `current()` (real tid). No `park`/`unpark` |
+| `thread` | ✅ | `spawn`/`join`/`Builder`, `sleep`/`yield_now`, `park`/`park_timeout`/`unpark`, `scope`, `available_parallelism`, `current()`/`Thread`/`ThreadId` (futex parker) |
 | `net` | ✅ | TCP/UDP, `ToSocketAddrs`, DNS (`/etc/hosts` + plain DNS); socket options/timeouts/`try_clone`/`peek` |
 | `os::fd` / `os::unix` | ✅ | `RawFd`/`OwnedFd`/`AsRawFd`/…; `MetadataExt`/`PermissionsExt`/`OsStrExt` |
 | `tls` (`thread_local!`) | ✅ | key-based; no destructors at thread exit yet |
@@ -42,8 +42,9 @@ what's implemented and the short list that remains.
 
 A short list — none of it blocks the common path:
 
-- **`thread::park`/`unpark`** and OS-level thread names. (TLS is in place, so the
-  parker can hang off the current thread now.)
+- **OS-level thread names.** `Builder::name`/`Thread::name` work (logical names);
+  publishing them to the kernel (`prctl`/`pthread_setname`) for `ps`/debuggers is
+  cosmetic and not yet wired.
 - **TLS destructors** at thread exit (values currently leak when a thread ends).
 - **DNS hardening:** multiple nameservers + retries/timeouts, `search` domains,
   CNAME chains, TCP fallback on truncation.

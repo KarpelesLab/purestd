@@ -34,6 +34,7 @@ unsafe impl<T: Send> Sync for Packet<T> {}
 struct Payload<F, T> {
     f: F,
     packet: Arc<Packet<T>>,
+    thread: Thread,
     stack_base: usize,
     stack_size: usize,
 }
@@ -47,9 +48,13 @@ where
     let Payload {
         f,
         packet,
+        thread,
         stack_base,
         stack_size,
     } = payload;
+
+    // Install our handle so `current()`/`park()` find this thread's parker.
+    CURRENT.with(|c| *c.borrow_mut() = Some(thread));
 
     let value = f(); // a panic here aborts the process (panic = "abort")
 
@@ -132,9 +137,15 @@ impl Builder {
             result: UnsafeCell::new(None),
         });
 
+        // The handle is built by the parent and shared: the child installs it as
+        // its `current()` (so `park()` reaches this parker), and the caller keeps
+        // a clone in the `JoinHandle` (so `unpark()` reaches the same parker).
+        let thread = Thread::new(self.name);
+
         let payload = Box::new(Payload {
             f,
             packet: packet.clone(),
+            thread: thread.clone(),
             stack_base: base,
             stack_size,
         });
@@ -142,13 +153,7 @@ impl Builder {
 
         let entry: sys_thread::ThreadEntry = thread_start::<F, T>;
         match unsafe { sys_thread::spawn_os(entry, arg, stack_top) } {
-            Ok(()) => Ok(JoinHandle {
-                packet,
-                thread: Thread {
-                    name: self.name,
-                    id: ThreadId(0),
-                },
-            }),
+            Ok(()) => Ok(JoinHandle { packet, thread }),
             Err(()) => {
                 // Reclaim everything we allocated.
                 unsafe {
@@ -185,32 +190,119 @@ pub fn yield_now() {
     sys_thread::yield_now();
 }
 
-/// An opaque thread identifier.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+/// An opaque, process-unique thread identifier. (Like `std`, this is *not* the
+/// OS tid — it's a monotonic token assigned at handle creation.)
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
 pub struct ThreadId(u64);
 
-/// A handle to a thread (minimal). Drop-in-ish for `std::thread::Thread`.
-#[derive(Clone)]
-pub struct Thread {
-    name: Option<String>,
-    id: ThreadId,
+impl ThreadId {
+    fn next() -> ThreadId {
+        static NEXT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+        ThreadId(NEXT.fetch_add(1, Ordering::Relaxed))
+    }
 }
 
+/// A blocking token for `park`/`unpark`. `state` is 0 (empty) or 1 (a token is
+/// available); both transitions wake any futex waiter.
+struct Parker {
+    state: AtomicU32,
+}
+
+impl Parker {
+    fn new() -> Parker {
+        Parker { state: AtomicU32::new(0) }
+    }
+
+    /// Block until a token is available, then consume it. A prior `unpark`
+    /// makes this return immediately. Only returns once genuinely notified.
+    fn park(&self) {
+        if self.state.swap(0, Ordering::Acquire) == 1 {
+            return; // token was already waiting
+        }
+        loop {
+            sys_thread::futex_wait(&self.state, 0);
+            if self.state.swap(0, Ordering::Acquire) == 1 {
+                return;
+            }
+            // Spurious wake: keep waiting.
+        }
+    }
+
+    /// Like [`park`](Self::park) but gives up after `dur`. May also return
+    /// spuriously (as `std::thread::park_timeout` is permitted to).
+    fn park_timeout(&self, dur: Duration) {
+        if self.state.swap(0, Ordering::Acquire) == 1 {
+            return;
+        }
+        sys_thread::futex_wait_timeout(&self.state, 0, dur);
+        self.state.swap(0, Ordering::Acquire); // consume a token if one arrived
+    }
+
+    /// Make the next (or current) `park` return. Idempotent until consumed.
+    fn unpark(&self) {
+        if self.state.swap(1, Ordering::Release) == 0 {
+            sys_thread::futex_wake(&self.state);
+        }
+    }
+}
+
+struct Inner {
+    id: ThreadId,
+    name: Option<String>,
+    parker: Parker,
+}
+
+/// A handle to a thread. Drop-in-ish for `std::thread::Thread`. Cloning shares
+/// the same underlying thread (and parker), as in `std`.
+#[derive(Clone)]
+pub struct Thread(Arc<Inner>);
+
 impl Thread {
+    fn new(name: Option<String>) -> Thread {
+        Thread(Arc::new(Inner {
+            id: ThreadId::next(),
+            name,
+            parker: Parker::new(),
+        }))
+    }
     pub fn name(&self) -> Option<&str> {
-        self.name.as_deref()
+        self.0.name.as_deref()
     }
     pub fn id(&self) -> ThreadId {
-        self.id
+        self.0.id
     }
+    /// Atomically make the thread's next `park` call return immediately.
+    pub fn unpark(&self) {
+        self.0.parker.unpark();
+    }
+}
+
+crate::thread_local! {
+    /// This thread's handle, lazily created for threads we didn't spawn.
+    static CURRENT: core::cell::RefCell<Option<Thread>> = core::cell::RefCell::new(None);
 }
 
 /// Returns a handle to the current thread.
 pub fn current() -> Thread {
-    Thread {
-        name: None,
-        id: ThreadId(crate::syscall::gettid()),
+    if let Some(t) = CURRENT.with(|c| c.borrow().clone()) {
+        return t;
     }
+    // A thread we didn't spawn (main or foreign): mint a handle and remember it.
+    let t = Thread::new(None);
+    CURRENT.with(|c| *c.borrow_mut() = Some(t.clone()));
+    t
+}
+
+/// Block the current thread until another thread calls `unpark` on its handle.
+/// May wake spuriously, but never before at least one `unpark` (tokens are not
+/// lost: an `unpark` before `park` makes the `park` return at once).
+pub fn park() {
+    current().0.parker.park();
+}
+
+/// Like [`park`] but returns after at most `dur` even without an `unpark`.
+pub fn park_timeout(dur: Duration) {
+    current().0.parker.park_timeout(dur);
 }
 
 /// Returns an estimate of the number of hardware threads available.

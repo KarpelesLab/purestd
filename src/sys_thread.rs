@@ -174,6 +174,18 @@ mod imp {
         }
     }
 
+    /// Wait until `*addr != expected` or `dur` elapses (single-shot; a spurious
+    /// early return is allowed). The `__ulock` timeout is in microseconds.
+    pub fn futex_wait_timeout(addr: &AtomicU32, expected: u32, dur: Duration) {
+        if addr.load(Ordering::Acquire) != expected {
+            return;
+        }
+        let us = core::cmp::min(dur.as_micros(), u32::MAX as u128) as usize;
+        unsafe {
+            svcn!(SYS_ULOCK_WAIT, UL_OP, addr as *const _ as usize, expected as usize, us);
+        }
+    }
+
     pub fn futex_wake(addr: &AtomicU32) {
         unsafe {
             svcn!(SYS_ULOCK_WAKE, UL_OP, addr as *const _ as usize, 0usize);
@@ -324,6 +336,24 @@ mod imp {
         }
     }
 
+    /// Wait until `*addr != expected` or `dur` elapses (single-shot). The
+    /// `FUTEX_WAIT` timeout is a *relative* `timespec`.
+    pub fn futex_wait_timeout(addr: &AtomicU32, expected: u32, dur: Duration) {
+        if addr.load(Ordering::Acquire) != expected {
+            return;
+        }
+        let ts = [dur.as_secs() as i64, dur.subsec_nanos() as i64];
+        unsafe {
+            arch::syscall4(
+                nr::FUTEX,
+                addr as *const _ as usize,
+                FUTEX_WAIT,
+                expected as usize,
+                ts.as_ptr() as usize,
+            );
+        }
+    }
+
     pub fn futex_wake(addr: &AtomicU32) {
         unsafe {
             arch::syscall3(nr::FUTEX, addr as *const _ as usize, FUTEX_WAKE, 1);
@@ -351,4 +381,7 @@ mod imp {
     }
 }
 
-pub use imp::{futex_wait, futex_wake, futex_wake_all, sleep, spawn_os, thread_exit, yield_now};
+pub use imp::{
+    futex_wait, futex_wait_timeout, futex_wake, futex_wake_all, sleep, spawn_os, thread_exit,
+    yield_now,
+};
