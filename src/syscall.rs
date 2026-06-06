@@ -104,6 +104,35 @@ pub fn getpid() -> u32 {
     unsafe { arch::syscall0(nr::GETPID) as u32 }
 }
 
+/// Fill `buf` with the NUL-terminated working directory.
+///
+/// Linux has `getcwd`; macOS has no such syscall, so we open `"."` and use
+/// `fcntl(F_GETPATH)`.
+#[inline]
+pub fn getcwd(buf: &mut [u8]) -> Result<usize, Errno> {
+    #[cfg(target_os = "macos")]
+    {
+        const F_GETPATH: usize = 50;
+        let dot = c".";
+        let fd = open(dot, O_RDONLY, 0)?;
+        let r = from_ret(unsafe {
+            arch::syscall3(nr::FCNTL, fd as usize, F_GETPATH, buf.as_mut_ptr() as usize)
+        });
+        let _ = close(fd);
+        r.map(|_| buf.iter().position(|&b| b == 0).unwrap_or(buf.len()))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        from_ret(unsafe { arch::syscall2(nr::GETCWD, buf.as_mut_ptr() as usize, buf.len()) })
+    }
+}
+
+/// `chdir(path)`.
+#[inline]
+pub fn chdir(path: &core::ffi::CStr) -> Result<(), Errno> {
+    from_ret(unsafe { arch::syscall1(nr::CHDIR, path.as_ptr() as usize) }).map(|_| ())
+}
+
 // ---- seek / file size ----
 pub const SEEK_SET: i32 = 0;
 pub const SEEK_CUR: i32 = 1;
@@ -132,6 +161,113 @@ pub fn fsync(fd: i32) -> Result<(), Errno> {
 #[inline]
 pub fn dup(fd: i32) -> Result<i32, Errno> {
     from_ret(unsafe { arch::syscall1(nr::DUP, fd as usize) }).map(|fd| fd as i32)
+}
+
+// ---- stat / directories / rename ----
+/// `*at` flag: don't follow a trailing symlink (lstat semantics).
+#[cfg(target_os = "macos")]
+pub const AT_SYMLINK_NOFOLLOW: usize = 0x20;
+#[cfg(not(target_os = "macos"))]
+pub const AT_SYMLINK_NOFOLLOW: usize = 0x100;
+/// `unlinkat` flag: remove a directory (`rmdir`).
+#[cfg(target_os = "macos")]
+pub const AT_REMOVEDIR: usize = 0x80;
+#[cfg(not(target_os = "macos"))]
+pub const AT_REMOVEDIR: usize = 0x200;
+
+/// A raw `stat` buffer. The kernel struct is smaller; the extra room is slack.
+pub type StatBuf = [u8; 256];
+
+/// Stat the file at `path` into a raw `stat` buffer (following a final symlink
+/// only when `follow`).
+///
+/// macOS has no 64-bit-inode `fstatat`, so it uses `stat64`/`lstat64`; Linux uses
+/// `newfstatat(AT_FDCWD, ...)`.
+#[inline]
+pub fn statat(path: &core::ffi::CStr, follow: bool) -> Result<StatBuf, Errno> {
+    let mut buf: StatBuf = [0; 256];
+    #[cfg(target_os = "macos")]
+    {
+        let n = if follow { nr::STAT64 } else { nr::LSTAT64 };
+        from_ret(unsafe {
+            arch::syscall2(n, path.as_ptr() as usize, buf.as_mut_ptr() as usize)
+        })?;
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let flags = if follow { 0 } else { AT_SYMLINK_NOFOLLOW };
+        from_ret(unsafe {
+            arch::syscall4(
+                nr::NEWFSTATAT,
+                arch::AT_FDCWD as usize,
+                path.as_ptr() as usize,
+                buf.as_mut_ptr() as usize,
+                flags,
+            )
+        })?;
+    }
+    Ok(buf)
+}
+
+/// `fstat(fd, &buf)`.
+#[inline]
+pub fn fstat(fd: i32) -> Result<StatBuf, Errno> {
+    let mut buf: StatBuf = [0; 256];
+    from_ret(unsafe { arch::syscall2(nr::FSTAT, fd as usize, buf.as_mut_ptr() as usize) })?;
+    Ok(buf)
+}
+
+/// `renameat(AT_FDCWD, old, AT_FDCWD, new)`.
+#[inline]
+pub fn rename(old: &core::ffi::CStr, new: &core::ffi::CStr) -> Result<(), Errno> {
+    from_ret(unsafe {
+        arch::syscall4(
+            nr::RENAMEAT,
+            arch::AT_FDCWD as usize,
+            old.as_ptr() as usize,
+            arch::AT_FDCWD as usize,
+            new.as_ptr() as usize,
+        )
+    })
+    .map(|_| ())
+}
+
+/// `unlinkat(AT_FDCWD, path, AT_REMOVEDIR)` — remove an empty directory.
+#[inline]
+pub fn rmdir(path: &core::ffi::CStr) -> Result<(), Errno> {
+    from_ret(unsafe {
+        arch::syscall3(
+            nr::UNLINKAT,
+            arch::AT_FDCWD as usize,
+            path.as_ptr() as usize,
+            AT_REMOVEDIR,
+        )
+    })
+    .map(|_| ())
+}
+
+/// Read a chunk of directory entries into `buf`. Returns bytes filled (0 = end).
+#[inline]
+pub fn getdirentries(fd: i32, buf: &mut [u8]) -> Result<usize, Errno> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut basep: i64 = 0;
+        from_ret(unsafe {
+            arch::syscall4(
+                nr::GETDIRENTRIES64,
+                fd as usize,
+                buf.as_mut_ptr() as usize,
+                buf.len(),
+                &mut basep as *mut i64 as usize,
+            )
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        from_ret(unsafe {
+            arch::syscall3(nr::GETDENTS64, fd as usize, buf.as_mut_ptr() as usize, buf.len())
+        })
+    }
 }
 
 /// Monotonic clock as `(seconds, nanoseconds)`.

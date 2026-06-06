@@ -68,40 +68,58 @@ pub fn args() -> Args {
     }
 }
 
-/// Iterator over `(key, value)` environment pairs.
-pub struct Vars {
-    idx: usize,
-    envp: *const *const u8,
+// The mutable environment: lazily seeded from the loader's `envp`, then owned by
+// us so `set_var`/`remove_var` work (std keeps its own copy of `environ` too).
+use crate::collections::BTreeMap;
+use crate::sync::{Mutex, OnceLock};
+
+static ENV_MAP: OnceLock<Mutex<BTreeMap<String, String>>> = OnceLock::new();
+
+fn env_map() -> &'static Mutex<BTreeMap<String, String>> {
+    ENV_MAP.get_or_init(|| {
+        let mut m = BTreeMap::new();
+        let envp = ENVP.load(Ordering::Relaxed) as *const *const u8;
+        if !envp.is_null() {
+            let mut i = 0;
+            loop {
+                let p = unsafe { *envp.add(i) };
+                if p.is_null() {
+                    break;
+                }
+                i += 1;
+                let bytes = unsafe { CStr::from_ptr(p as *const c_char).to_bytes() };
+                if let Some(eq) = bytes.iter().position(|&b| b == b'=') {
+                    let k = String::from_utf8_lossy(&bytes[..eq]).into_owned();
+                    let v = String::from_utf8_lossy(&bytes[eq + 1..]).into_owned();
+                    m.insert(k, v);
+                }
+            }
+        }
+        Mutex::new(m)
+    })
 }
 
+/// Iterator over `(key, value)` environment pairs.
+pub struct Vars {
+    inner: crate::alloc::vec::IntoIter<(String, String)>,
+}
 impl Iterator for Vars {
     type Item = (String, String);
     fn next(&mut self) -> Option<(String, String)> {
-        if self.envp.is_null() {
-            return None;
-        }
-        loop {
-            let p = unsafe { *self.envp.add(self.idx) };
-            if p.is_null() {
-                return None;
-            }
-            self.idx += 1;
-            let bytes = unsafe { CStr::from_ptr(p as *const c_char).to_bytes() };
-            if let Some(eq) = bytes.iter().position(|&b| b == b'=') {
-                let k = String::from_utf8_lossy(&bytes[..eq]).into_owned();
-                let v = String::from_utf8_lossy(&bytes[eq + 1..]).into_owned();
-                return Some((k, v));
-            }
-            // No '=' — skip malformed entry and continue.
-        }
+        self.inner.next()
     }
 }
 
-/// Returns an iterator over the environment variables.
+/// Returns a snapshot iterator over the environment variables.
 pub fn vars() -> Vars {
+    let snapshot: crate::alloc::vec::Vec<(String, String)> = env_map()
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
     Vars {
-        idx: 0,
-        envp: ENVP.load(Ordering::Relaxed) as *const *const u8,
+        inner: snapshot.into_iter(),
     }
 }
 
@@ -120,24 +138,52 @@ impl fmt::Display for VarError {
     }
 }
 
+impl core::error::Error for VarError {}
+
 /// Fetch the environment variable `key`. Mirrors `std::env::var`.
 pub fn var(key: &str) -> Result<String, VarError> {
-    let envp = ENVP.load(Ordering::Relaxed) as *const *const u8;
-    if envp.is_null() {
-        return Err(VarError::NotPresent);
-    }
-    let mut i = 0;
-    loop {
-        let p = unsafe { *envp.add(i) };
-        if p.is_null() {
-            return Err(VarError::NotPresent);
-        }
-        i += 1;
-        let bytes = unsafe { CStr::from_ptr(p as *const c_char).to_bytes() };
-        if let Some(eq) = bytes.iter().position(|&b| b == b'=') {
-            if &bytes[..eq] == key.as_bytes() {
-                return Ok(String::from_utf8_lossy(&bytes[eq + 1..]).into_owned());
-            }
-        }
+    env_map()
+        .lock()
+        .unwrap()
+        .get(key)
+        .cloned()
+        .ok_or(VarError::NotPresent)
+}
+
+/// Set the environment variable `key` to `value`.
+pub fn set_var<K: AsRef<str>, V: AsRef<str>>(key: K, value: V) {
+    env_map()
+        .lock()
+        .unwrap()
+        .insert(key.as_ref().into(), value.as_ref().into());
+}
+
+/// Remove the environment variable `key`.
+pub fn remove_var<K: AsRef<str>>(key: K) {
+    env_map().lock().unwrap().remove(key.as_ref());
+}
+
+/// Returns the current working directory.
+pub fn current_dir() -> crate::io::Result<crate::path::PathBuf> {
+    let mut buf = [0u8; 4096];
+    crate::syscall::getcwd(&mut buf).map_err(crate::io::Error::from)?;
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    Ok(crate::path::PathBuf::from(
+        String::from_utf8_lossy(&buf[..end]).into_owned(),
+    ))
+}
+
+/// Change the current working directory.
+pub fn set_current_dir<P: AsRef<crate::path::Path>>(path: P) -> crate::io::Result<()> {
+    let c = crate::ffi::CString::new(path.as_ref().as_str().as_bytes())
+        .map_err(|_| crate::io::Error::from(crate::io::ErrorKind::InvalidInput))?;
+    crate::syscall::chdir(&c).map_err(crate::io::Error::from)
+}
+
+/// Returns the OS temporary-files directory (`$TMPDIR`, else `/tmp`).
+pub fn temp_dir() -> crate::path::PathBuf {
+    match var("TMPDIR") {
+        Ok(d) if !d.is_empty() => crate::path::PathBuf::from(d),
+        _ => crate::path::PathBuf::from("/tmp"),
     }
 }

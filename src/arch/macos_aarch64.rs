@@ -42,11 +42,12 @@ pub mod nr {
     pub const FTRUNCATE: usize = C | 201;
     pub const FSYNC: usize = C | 95;
     pub const RENAMEAT: usize = C | 465;
-    pub const FSTAT: usize = C | 339;
-    pub const FSTATAT: usize = C | 469;
+    pub const FSTAT: usize = C | 339; // fstat64 (64-bit inode struct stat)
+    pub const STAT64: usize = C | 338;
+    pub const LSTAT64: usize = C | 340;
     pub const GETDIRENTRIES64: usize = C | 344;
     pub const CHDIR: usize = C | 12;
-    pub const GETCWD: usize = C | 326;
+    pub const FCNTL: usize = C | 92;
     /// Darwin has no thread groups; map the Linux name to plain `exit`.
     pub const EXIT_GROUP: usize = EXIT;
     /// Linux has a dedicated `getrandom`; Darwin uses `getentropy`.

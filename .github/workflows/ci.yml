@@ -47,3 +47,4 @@ jobs:
           check "net: OK"                 "$B/net"
           check "io_test: OK"             "$B/io_test"
           check "synctest: OK"            "$B/synctest"
+          check "fstest: OK"              "$B/fstest"

@@ -178,3 +178,305 @@ impl crate::os::fd::AsRawFd for File {
         self.fd
     }
 }
+
+// ---------------------------------------------------------------------------
+// Metadata / FileType / Permissions
+// ---------------------------------------------------------------------------
+
+const S_IFMT: u32 = 0o170000;
+const S_IFREG: u32 = 0o100000;
+const S_IFDIR: u32 = 0o040000;
+const S_IFLNK: u32 = 0o120000;
+
+// Field offsets into the kernel `struct stat`, which differs per target.
+#[cfg(target_os = "macos")]
+fn st_mode(b: &syscall::StatBuf) -> u32 {
+    u16::from_ne_bytes([b[4], b[5]]) as u32
+}
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn st_mode(b: &syscall::StatBuf) -> u32 {
+    u32::from_ne_bytes([b[24], b[25], b[26], b[27]])
+}
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+fn st_mode(b: &syscall::StatBuf) -> u32 {
+    u32::from_ne_bytes([b[16], b[17], b[18], b[19]])
+}
+
+#[cfg(target_os = "macos")]
+const ST_SIZE_OFF: usize = 96;
+#[cfg(not(target_os = "macos"))]
+const ST_SIZE_OFF: usize = 48;
+#[cfg(target_os = "macos")]
+const ST_MTIME_OFF: usize = 48;
+#[cfg(not(target_os = "macos"))]
+const ST_MTIME_OFF: usize = 88;
+
+fn read_i64(b: &[u8], off: usize) -> i64 {
+    let mut a = [0u8; 8];
+    a.copy_from_slice(&b[off..off + 8]);
+    i64::from_ne_bytes(a)
+}
+
+/// The type of a file (regular/dir/symlink). Drop-in for `std::fs::FileType`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FileType(u32);
+impl FileType {
+    pub fn is_file(&self) -> bool {
+        self.0 & S_IFMT == S_IFREG
+    }
+    pub fn is_dir(&self) -> bool {
+        self.0 & S_IFMT == S_IFDIR
+    }
+    pub fn is_symlink(&self) -> bool {
+        self.0 & S_IFMT == S_IFLNK
+    }
+}
+
+/// File permissions. Drop-in for `std::fs::Permissions`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Permissions(u32);
+impl Permissions {
+    pub fn readonly(&self) -> bool {
+        self.0 & 0o222 == 0
+    }
+    pub fn set_readonly(&mut self, readonly: bool) {
+        if readonly {
+            self.0 &= !0o222;
+        } else {
+            self.0 |= 0o200;
+        }
+    }
+    pub fn mode(&self) -> u32 {
+        self.0
+    }
+}
+
+/// Metadata for a file. Drop-in for `std::fs::Metadata`.
+#[derive(Clone)]
+pub struct Metadata {
+    raw: syscall::StatBuf,
+}
+impl Metadata {
+    pub fn file_type(&self) -> FileType {
+        FileType(st_mode(&self.raw) & S_IFMT)
+    }
+    pub fn is_file(&self) -> bool {
+        self.file_type().is_file()
+    }
+    pub fn is_dir(&self) -> bool {
+        self.file_type().is_dir()
+    }
+    pub fn is_symlink(&self) -> bool {
+        self.file_type().is_symlink()
+    }
+    pub fn len(&self) -> u64 {
+        read_i64(&self.raw, ST_SIZE_OFF) as u64
+    }
+    pub fn permissions(&self) -> Permissions {
+        Permissions(st_mode(&self.raw) & 0o7777)
+    }
+    pub fn modified(&self) -> io::Result<crate::time::SystemTime> {
+        let secs = read_i64(&self.raw, ST_MTIME_OFF);
+        Ok(crate::time::UNIX_EPOCH + crate::time::Duration::from_secs(secs as u64))
+    }
+}
+
+impl File {
+    /// Query metadata for this open file.
+    pub fn metadata(&self) -> io::Result<Metadata> {
+        Ok(Metadata {
+            raw: syscall::fstat(self.fd).map_err(Error::from)?,
+        })
+    }
+}
+
+/// Metadata for the file at `path` (follows symlinks).
+pub fn metadata<P: AsRef<Path>>(path: P) -> io::Result<Metadata> {
+    let c = cpath(path.as_ref())?;
+    Ok(Metadata {
+        raw: syscall::statat(&c, true).map_err(Error::from)?,
+    })
+}
+
+/// Metadata for the file at `path` without following a final symlink.
+pub fn symlink_metadata<P: AsRef<Path>>(path: P) -> io::Result<Metadata> {
+    let c = cpath(path.as_ref())?;
+    Ok(Metadata {
+        raw: syscall::statat(&c, false).map_err(Error::from)?,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// rename / copy / dirs
+// ---------------------------------------------------------------------------
+
+/// Rename a file or directory.
+pub fn rename<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<()> {
+    let a = cpath(from.as_ref())?;
+    let b = cpath(to.as_ref())?;
+    syscall::rename(&a, &b).map_err(Error::from)
+}
+
+/// Copy the contents of `from` to `to`, returning the number of bytes copied.
+pub fn copy<P: AsRef<Path>, Q: AsRef<Path>>(from: P, to: Q) -> io::Result<u64> {
+    let mut src = File::open(from)?;
+    let mut dst = File::create(to)?;
+    io::copy(&mut src, &mut dst)
+}
+
+/// Remove an empty directory.
+pub fn remove_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    let c = cpath(path.as_ref())?;
+    syscall::rmdir(&c).map_err(Error::from)
+}
+
+/// Recursively create a directory and all of its parents.
+pub fn create_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    let p = path.as_ref();
+    if metadata(p).map(|m| m.is_dir()).unwrap_or(false) {
+        return Ok(());
+    }
+    if let Some(parent) = p.parent() {
+        if !parent.as_str().is_empty() {
+            create_dir_all(parent)?;
+        }
+    }
+    match create_dir(p) {
+        Ok(()) => Ok(()),
+        Err(ref e) if e.kind() == ErrorKind::AlreadyExists => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Recursively remove a directory and all its contents.
+pub fn remove_dir_all<P: AsRef<Path>>(path: P) -> io::Result<()> {
+    let p = path.as_ref();
+    for entry in read_dir(p)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            remove_dir_all(entry.path())?;
+        } else {
+            remove_file(entry.path())?;
+        }
+    }
+    remove_dir(p)
+}
+
+// ---------------------------------------------------------------------------
+// read_dir
+// ---------------------------------------------------------------------------
+
+const DT_DIR: u8 = 4;
+const DT_REG: u8 = 8;
+const DT_LNK: u8 = 10;
+
+/// An entry returned by [`read_dir`]. Drop-in for `std::fs::DirEntry`.
+pub struct DirEntry {
+    name: String,
+    d_type: u8,
+    parent: crate::path::PathBuf,
+}
+impl DirEntry {
+    pub fn file_name(&self) -> crate::ffi::OsString {
+        crate::ffi::OsString::from(self.name.clone())
+    }
+    pub fn path(&self) -> crate::path::PathBuf {
+        self.parent.join(self.name.as_str())
+    }
+    pub fn file_type(&self) -> io::Result<FileType> {
+        let t = match self.d_type {
+            DT_DIR => S_IFDIR,
+            DT_REG => S_IFREG,
+            DT_LNK => S_IFLNK,
+            _ => return Ok(symlink_metadata(self.path())?.file_type()),
+        };
+        Ok(FileType(t))
+    }
+    pub fn metadata(&self) -> io::Result<Metadata> {
+        symlink_metadata(self.path())
+    }
+}
+
+/// Iterator over the entries in a directory. Drop-in for `std::fs::ReadDir`.
+pub struct ReadDir {
+    fd: i32,
+    parent: crate::path::PathBuf,
+    buf: Vec<u8>,
+    pos: usize,
+    cap: usize,
+}
+impl Drop for ReadDir {
+    fn drop(&mut self) {
+        let _ = syscall::close(self.fd);
+    }
+}
+
+/// Iterate over the entries within a directory.
+pub fn read_dir<P: AsRef<Path>>(path: P) -> io::Result<ReadDir> {
+    let c = cpath(path.as_ref())?;
+    let fd = syscall::open(&c, syscall::O_RDONLY, 0).map_err(Error::from)?;
+    let mut buf = Vec::with_capacity(4096);
+    buf.resize(4096, 0);
+    Ok(ReadDir {
+        fd,
+        parent: crate::path::PathBuf::from(path.as_ref().as_str()),
+        buf,
+        pos: 0,
+        cap: 0,
+    })
+}
+
+impl Iterator for ReadDir {
+    type Item = io::Result<DirEntry>;
+    fn next(&mut self) -> Option<io::Result<DirEntry>> {
+        loop {
+            if self.pos >= self.cap {
+                match syscall::getdirentries(self.fd, &mut self.buf) {
+                    Ok(0) => return None,
+                    Ok(n) => {
+                        self.cap = n;
+                        self.pos = 0;
+                    }
+                    Err(e) => return Some(Err(Error::from(e))),
+                }
+            }
+            let rec = &self.buf[self.pos..self.cap];
+            // d_reclen is at offset 16 on both Linux (dirent64) and macOS (dirent).
+            let reclen = u16::from_ne_bytes([rec[16], rec[17]]) as usize;
+            if reclen == 0 || self.pos + reclen > self.cap {
+                // Defensive: force a refill.
+                self.pos = self.cap;
+                continue;
+            }
+            #[cfg(target_os = "macos")]
+            let (name_off, d_type, namlen) = {
+                let namlen = u16::from_ne_bytes([rec[18], rec[19]]) as usize;
+                (21usize, rec[20], Some(namlen))
+            };
+            #[cfg(not(target_os = "macos"))]
+            let (name_off, d_type, namlen): (usize, u8, Option<usize>) = (19, rec[18], None);
+
+            let name_bytes = match namlen {
+                Some(l) => &rec[name_off..name_off + l],
+                None => {
+                    let end = rec[name_off..reclen]
+                        .iter()
+                        .position(|&b| b == 0)
+                        .map(|i| name_off + i)
+                        .unwrap_or(reclen);
+                    &rec[name_off..end]
+                }
+            };
+            let name = String::from_utf8_lossy(name_bytes).into_owned();
+            self.pos += reclen;
+            if name == "." || name == ".." {
+                continue;
+            }
+            return Some(Ok(DirEntry {
+                name,
+                d_type,
+                parent: self.parent.clone(),
+            }));
+        }
+    }
+}
