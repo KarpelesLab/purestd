@@ -480,3 +480,46 @@ impl Iterator for ReadDir {
         }
     }
 }
+
+// Raw stat accessors for os::unix::fs::MetadataExt (uid/gid offsets per target).
+#[cfg(target_os = "macos")]
+const ST_UID_OFF: usize = 16;
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+const ST_UID_OFF: usize = 28;
+#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+const ST_UID_OFF: usize = 24;
+
+impl Metadata {
+    #[doc(hidden)]
+    pub fn raw_mode(&self) -> u32 {
+        st_mode(&self.raw)
+    }
+    #[doc(hidden)]
+    pub fn raw_uid(&self) -> u32 {
+        u32::from_ne_bytes([
+            self.raw[ST_UID_OFF],
+            self.raw[ST_UID_OFF + 1],
+            self.raw[ST_UID_OFF + 2],
+            self.raw[ST_UID_OFF + 3],
+        ])
+    }
+    #[doc(hidden)]
+    pub fn raw_gid(&self) -> u32 {
+        let o = ST_UID_OFF + 4;
+        u32::from_ne_bytes([self.raw[o], self.raw[o + 1], self.raw[o + 2], self.raw[o + 3]])
+    }
+    #[doc(hidden)]
+    pub fn raw_ino(&self) -> u64 {
+        // st_ino is a u64 at offset 8 on macOS and both Linux arches.
+        let mut a = [0u8; 8];
+        a.copy_from_slice(&self.raw[8..16]);
+        u64::from_ne_bytes(a)
+    }
+}
+
+impl Permissions {
+    #[doc(hidden)]
+    pub fn from_mode_raw(mode: u32) -> Permissions {
+        Permissions(mode & 0o7777)
+    }
+}

@@ -94,6 +94,35 @@ pub mod unix {
         pub use crate::os::fd::*;
     }
 
+    /// `std::os::unix::fs` — Unix file metadata/permission extensions.
+    pub mod fs {
+        use crate::fs::{Metadata, Permissions};
+
+        pub trait MetadataExt {
+            fn mode(&self) -> u32;
+            fn uid(&self) -> u32;
+            fn gid(&self) -> u32;
+            fn ino(&self) -> u64;
+            fn size(&self) -> u64;
+        }
+        impl MetadataExt for Metadata {
+            fn mode(&self) -> u32 { self.raw_mode() }
+            fn uid(&self) -> u32 { self.raw_uid() }
+            fn gid(&self) -> u32 { self.raw_gid() }
+            fn ino(&self) -> u64 { self.raw_ino() }
+            fn size(&self) -> u64 { self.len() }
+        }
+
+        pub trait PermissionsExt {
+            fn mode(&self) -> u32;
+            fn from_mode(mode: u32) -> Self;
+        }
+        impl PermissionsExt for Permissions {
+            fn mode(&self) -> u32 { Permissions::mode(self) }
+            fn from_mode(mode: u32) -> Permissions { Permissions::from_mode_raw(mode) }
+        }
+    }
+
     /// `std::os::unix::ffi` — byte access to `OsStr`/`OsString`.
     pub mod ffi {
         use crate::alloc::string::String;
@@ -129,6 +158,7 @@ pub mod unix {
     /// `std::os::unix::prelude`.
     pub mod prelude {
         pub use super::ffi::{OsStrExt, OsStringExt};
+        pub use super::fs::{MetadataExt, PermissionsExt};
         pub use super::io::*;
     }
 }

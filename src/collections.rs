@@ -552,3 +552,63 @@ pub mod hash_map {
 pub mod hash_set {
     pub use super::HashSet;
 }
+
+impl<K: Hash + Eq, V, S: BuildHasher> HashMap<K, V, S> {
+    /// Retain only the entries for which `f(&k, &mut v)` returns true.
+    pub fn retain<F: FnMut(&K, &mut V) -> bool>(&mut self, mut f: F) {
+        for i in 0..self.slots.len() {
+            let keep = match &mut self.slots[i] {
+                Slot::Full(_, k, v) => f(k, v),
+                _ => true,
+            };
+            if !keep {
+                self.slots[i] = Slot::Tombstone;
+                self.len -= 1;
+            }
+        }
+    }
+}
+
+impl<T: Hash + Eq, S: BuildHasher> HashSet<T, S> {
+    pub fn get<Q>(&self, value: &Q) -> Option<&T>
+    where
+        T: core::borrow::Borrow<Q>,
+        Q: Hash + Eq + ?Sized,
+    {
+        // The key is stored in the underlying map; surface it.
+        if self.map.contains_key(value) {
+            self.map.keys().find(|k| (*k).borrow() == value)
+        } else {
+            None
+        }
+    }
+    pub fn is_disjoint(&self, other: &HashSet<T, S>) -> bool {
+        self.iter().all(|v| !other.contains(v))
+    }
+    pub fn is_subset(&self, other: &HashSet<T, S>) -> bool {
+        self.iter().all(|v| other.contains(v))
+    }
+    pub fn is_superset(&self, other: &HashSet<T, S>) -> bool {
+        other.is_subset(self)
+    }
+    pub fn intersection<'a>(&'a self, other: &'a HashSet<T, S>) -> impl Iterator<Item = &'a T> {
+        self.iter().filter(move |v| other.contains(*v))
+    }
+    pub fn difference<'a>(&'a self, other: &'a HashSet<T, S>) -> impl Iterator<Item = &'a T> {
+        self.iter().filter(move |v| !other.contains(*v))
+    }
+    pub fn union<'a>(&'a self, other: &'a HashSet<T, S>) -> impl Iterator<Item = &'a T> {
+        self.iter().chain(other.iter().filter(move |v| !self.contains(*v)))
+    }
+    pub fn retain<F: FnMut(&T) -> bool>(&mut self, mut f: F) {
+        self.map.retain(|k, _| f(k));
+    }
+}
+
+impl<'a, T, S> IntoIterator for &'a HashSet<T, S> {
+    type Item = &'a T;
+    type IntoIter = Keys<'a, T, ()>;
+    fn into_iter(self) -> Keys<'a, T, ()> {
+        self.iter()
+    }
+}

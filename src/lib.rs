@@ -139,3 +139,42 @@ pub mod panic {
 
 #[doc(hidden)]
 pub use panic as panicking;
+
+/// `std::backtrace` — capture is unsupported (no unwinder/symbolication), so
+/// `Backtrace::capture` always reports `Unsupported`. Provided for API parity.
+pub mod backtrace {
+    use core::fmt;
+
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub enum BacktraceStatus {
+        Unsupported,
+        Disabled,
+        Captured,
+    }
+
+    pub struct Backtrace;
+    impl Backtrace {
+        pub fn capture() -> Backtrace {
+            Backtrace
+        }
+        pub fn force_capture() -> Backtrace {
+            Backtrace
+        }
+        pub fn disabled() -> Backtrace {
+            Backtrace
+        }
+        pub fn status(&self) -> BacktraceStatus {
+            BacktraceStatus::Unsupported
+        }
+    }
+    impl fmt::Display for Backtrace {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("unsupported backtrace")
+        }
+    }
+    impl fmt::Debug for Backtrace {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            f.write_str("Backtrace(unsupported)")
+        }
+    }
+}

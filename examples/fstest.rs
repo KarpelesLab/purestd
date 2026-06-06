@@ -41,6 +41,21 @@ fn main() {
     println!("temp_dir = {}", env::temp_dir());
     println!("HOME present = {}", env::var("HOME").is_ok());
 
+    {
+        use purestd::os::unix::fs::MetadataExt;
+        fs::write("/tmp/purestd_mx.txt", b"x").unwrap();
+        let m = fs::metadata("/tmp/purestd_mx.txt").unwrap();
+        println!("metadata ext: mode={:#o} uid={} ino_nonzero={}", m.mode() & 0o777, m.uid(), m.ino() != 0);
+        let _ = fs::remove_file("/tmp/purestd_mx.txt");
+    }
+    {
+        use purestd::collections::HashSet;
+        let a: HashSet<i32> = [1,2,3].into_iter().collect();
+        let b: HashSet<i32> = [2,3,4].into_iter().collect();
+        let mut inter: Vec<_> = a.intersection(&b).copied().collect(); inter.sort();
+        println!("hashset intersection = {:?} subset={}", inter, [2,3].into_iter().collect::<HashSet<_>>().is_subset(&a));
+    }
+    println!("backtrace status = {:?}", purestd::backtrace::Backtrace::capture().status());
     println!("fstest: OK");
 }
 purestd::entry!(main);
