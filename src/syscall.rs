@@ -128,6 +128,12 @@ pub fn fsync(fd: i32) -> Result<(), Errno> {
     from_ret(unsafe { arch::syscall1(nr::FSYNC, fd as usize) }).map(|_| ())
 }
 
+/// `dup(fd)` -> new fd.
+#[inline]
+pub fn dup(fd: i32) -> Result<i32, Errno> {
+    from_ret(unsafe { arch::syscall1(nr::DUP, fd as usize) }).map(|fd| fd as i32)
+}
+
 /// Monotonic clock as `(seconds, nanoseconds)`.
 ///
 /// On Linux this is `clock_gettime(CLOCK_MONOTONIC)`. On macOS/arm64 it reads

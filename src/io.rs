@@ -156,19 +156,45 @@ impl fmt::Display for Error {
 
 impl core::error::Error for Error {}
 
-/// Map a raw errno to an [`ErrorKind`] (values shared by Linux & Darwin for the
-/// common cases).
+/// Map a raw errno to an [`ErrorKind`]. Many error numbers differ between Darwin
+/// and Linux, so the divergent ones are split by target.
 fn errno_kind(c: i32) -> ErrorKind {
     use ErrorKind::*;
+    // Shared values.
     match c {
-        1 => PermissionDenied,   // EPERM
-        2 => NotFound,           // ENOENT
-        4 => Interrupted,        // EINTR
-        13 => PermissionDenied,  // EACCES
-        17 => AlreadyExists,     // EEXIST
-        22 => InvalidInput,      // EINVAL
-        32 => BrokenPipe,        // EPIPE
-        35 | 11 => WouldBlock,   // EAGAIN/EWOULDBLOCK (Darwin 35, Linux 11)
+        1 => return PermissionDenied,  // EPERM
+        2 => return NotFound,          // ENOENT
+        4 => return Interrupted,       // EINTR
+        13 => return PermissionDenied, // EACCES
+        17 => return AlreadyExists,    // EEXIST
+        22 => return InvalidInput,     // EINVAL
+        32 => return BrokenPipe,       // EPIPE
+        _ => {}
+    }
+    #[cfg(target_os = "macos")]
+    match c {
+        35 => WouldBlock,        // EAGAIN
+        61 => ConnectionRefused, // ECONNREFUSED
+        54 => ConnectionReset,   // ECONNRESET
+        53 => ConnectionAborted, // ECONNABORTED
+        57 => NotConnected,      // ENOTCONN
+        48 => AddrInUse,         // EADDRINUSE
+        49 => AddrNotAvailable,  // EADDRNOTAVAIL
+        60 => TimedOut,          // ETIMEDOUT
+        78 => Unsupported,       // ENOSYS
+        _ => Other,
+    }
+    #[cfg(not(target_os = "macos"))]
+    match c {
+        11 => WouldBlock,         // EAGAIN
+        111 => ConnectionRefused, // ECONNREFUSED
+        104 => ConnectionReset,   // ECONNRESET
+        103 => ConnectionAborted, // ECONNABORTED
+        107 => NotConnected,      // ENOTCONN
+        98 => AddrInUse,          // EADDRINUSE
+        99 => AddrNotAvailable,   // EADDRNOTAVAIL
+        110 => TimedOut,          // ETIMEDOUT
+        38 => Unsupported,        // ENOSYS
         _ => Other,
     }
 }

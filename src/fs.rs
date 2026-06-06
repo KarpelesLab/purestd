@@ -172,3 +172,9 @@ pub fn create_dir<P: AsRef<Path>>(path: P) -> io::Result<()> {
     let c = cpath(path.as_ref())?;
     syscall::mkdir(&c, 0o755).map_err(Error::from)
 }
+
+impl crate::os::fd::AsRawFd for File {
+    fn as_raw_fd(&self) -> i32 {
+        self.fd
+    }
+}

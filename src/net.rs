@@ -571,3 +571,19 @@ fn skip_name(msg: &[u8], mut p: usize) -> Option<usize> {
         }
     }
 }
+
+impl crate::os::fd::AsRawFd for TcpStream {
+    fn as_raw_fd(&self) -> i32 {
+        self.0 .0
+    }
+}
+impl crate::os::fd::AsRawFd for TcpListener {
+    fn as_raw_fd(&self) -> i32 {
+        self.0 .0
+    }
+}
+impl crate::os::fd::AsRawFd for UdpSocket {
+    fn as_raw_fd(&self) -> i32 {
+        self.0 .0
+    }
+}

@@ -79,6 +79,7 @@ pub mod nr {
     pub const CLOCK_GETTIME: usize = 113;
     pub const GETTIMEOFDAY: usize = 169;
     pub const GETPID: usize = 172;
+    pub const DUP: usize = 23;
     pub const MUNMAP: usize = 215;
     pub const MMAP: usize = 222;
     pub const GETRANDOM: usize = 278;

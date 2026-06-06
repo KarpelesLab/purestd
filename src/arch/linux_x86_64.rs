@@ -47,6 +47,7 @@ pub mod nr {
     pub const MMAP: usize = 9;
     pub const MUNMAP: usize = 11;
     pub const GETPID: usize = 39;
+    pub const DUP: usize = 32;
     pub const EXIT: usize = 60;
     pub const GETTIMEOFDAY: usize = 96;
     pub const EXIT_GROUP: usize = 231;

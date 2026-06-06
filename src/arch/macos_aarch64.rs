@@ -17,6 +17,7 @@ pub mod nr {
     pub const OPEN: usize = C | 5;
     pub const CLOSE: usize = C | 6;
     pub const GETPID: usize = C | 20;
+    pub const DUP: usize = C | 41;
     pub const LSEEK: usize = C | 199;
     pub const GETTIMEOFDAY: usize = C | 116;
     pub const UNLINKAT: usize = C | 472;
