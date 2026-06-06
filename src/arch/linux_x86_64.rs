@@ -77,7 +77,7 @@ pub mod nr {
     pub const CLOCK_GETTIME: usize = 228;
     pub const FTRUNCATE: usize = 77;
     pub const FSYNC: usize = 74;
-    pub const RENAME: usize = 82;
+    pub const RENAMEAT: usize = 264;
     pub const FSTAT: usize = 5;
     pub const NEWFSTATAT: usize = 262;
     pub const GETDENTS64: usize = 217;
