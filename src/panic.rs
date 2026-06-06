@@ -11,7 +11,7 @@ use core::panic::PanicInfo;
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     // `PanicInfo`'s Display already includes both the message and location.
-    let mut err = crate::io::stderr();
+    let mut err = crate::io::Fd(2);
     let _ = writeln!(err, "thread 'main' panicked:\n{}", info);
     crate::rt::exit(101)
 }

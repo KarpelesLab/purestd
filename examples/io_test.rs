@@ -44,6 +44,13 @@ fn main() {
     for i in 0..200_000u64 { acc = acc.wrapping_add(i); }
     core::hint::black_box(acc);
     println!("monotonic elapsed = {:?}", t.elapsed());
+    assert!(purestd::panic::catch_unwind(|| 2 + 2).unwrap() == 4);
+    {
+        use purestd::io::Write as _;
+        let so = purestd::io::stdout();
+        let mut l = so.lock();
+        writeln!(l, "stdout lock ok").unwrap();
+    }
     println!("io_test: OK");
 }
 purestd::entry!(main);

@@ -380,42 +380,131 @@ impl Seek for Fd {
 // Standard streams
 // ---------------------------------------------------------------------------
 
+use crate::sync::{Mutex, MutexGuard, OnceLock};
+
+// Process-wide stdin is a shared, buffered reader behind a mutex (like std).
+static STDIN_BUF: OnceLock<Mutex<BufReader<Fd>>> = OnceLock::new();
+fn stdin_buf() -> &'static Mutex<BufReader<Fd>> {
+    STDIN_BUF.get_or_init(|| Mutex::new(BufReader::new(Fd(STDIN))))
+}
+// Locks serializing stdout/stderr writes so concurrent prints don't interleave.
+static STDOUT_LOCK: Mutex<()> = Mutex::new(());
+static STDERR_LOCK: Mutex<()> = Mutex::new(());
+
 /// Handle to the standard input stream. Drop-in for `std::io::Stdin`.
-pub struct Stdin(Fd);
+pub struct Stdin(());
 /// Handle to the standard output stream. Drop-in for `std::io::Stdout`.
-pub struct Stdout(Fd);
+pub struct Stdout(());
 /// Handle to the standard error stream. Drop-in for `std::io::Stderr`.
-pub struct Stderr(Fd);
+pub struct Stderr(());
 
 /// Construct a handle to standard input.
 pub fn stdin() -> Stdin {
-    Stdin(Fd(STDIN))
+    Stdin(())
 }
 /// Construct a handle to standard output.
 pub fn stdout() -> Stdout {
-    Stdout(Fd(STDOUT))
+    Stdout(())
 }
 /// Construct a handle to standard error.
 pub fn stderr() -> Stderr {
-    Stderr(Fd(STDERR))
+    Stderr(())
 }
 
+impl Stdin {
+    /// Lock the shared stdin reader. Drop-in for `Stdin::lock`.
+    pub fn lock(&self) -> StdinLock<'static> {
+        StdinLock {
+            guard: stdin_buf().lock().unwrap(),
+        }
+    }
+    pub fn read_line(&self, buf: &mut String) -> Result<usize> {
+        self.lock().read_line(buf)
+    }
+    pub fn lines(self) -> Lines<StdinLock<'static>> {
+        self.lock().lines()
+    }
+}
 impl Read for Stdin {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
-        self.0.read(buf)
+        self.lock().read(buf)
+    }
+}
+
+/// A locked handle to the shared stdin reader. Drop-in for `StdinLock`.
+pub struct StdinLock<'a> {
+    guard: MutexGuard<'a, BufReader<Fd>>,
+}
+impl Read for StdinLock<'_> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize> {
+        self.guard.read(buf)
+    }
+}
+impl BufRead for StdinLock<'_> {
+    fn fill_buf(&mut self) -> Result<&[u8]> {
+        self.guard.fill_buf()
+    }
+    fn consume(&mut self, amt: usize) {
+        self.guard.consume(amt)
+    }
+}
+
+impl Stdout {
+    pub fn lock(&self) -> StdoutLock<'static> {
+        StdoutLock {
+            _guard: STDOUT_LOCK.lock().unwrap(),
+            fd: Fd(STDOUT),
+        }
     }
 }
 impl Write for Stdout {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.0.write(buf)
+        let mut l = self.lock();
+        l.write(buf)
     }
     fn flush(&mut self) -> Result<()> {
         Ok(())
     }
 }
+/// A locked stdout handle. Drop-in for `StdoutLock`.
+pub struct StdoutLock<'a> {
+    _guard: MutexGuard<'a, ()>,
+    fd: Fd,
+}
+impl Write for StdoutLock<'_> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.fd.write(buf)
+    }
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+
+impl Stderr {
+    pub fn lock(&self) -> StderrLock<'static> {
+        StderrLock {
+            _guard: STDERR_LOCK.lock().unwrap(),
+            fd: Fd(STDERR),
+        }
+    }
+}
 impl Write for Stderr {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
-        self.0.write(buf)
+        let mut l = self.lock();
+        l.write(buf)
+    }
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
+}
+/// A locked stderr handle. Drop-in for `StderrLock`.
+pub struct StderrLock<'a> {
+    _guard: MutexGuard<'a, ()>,
+    fd: Fd,
+}
+impl Write for StderrLock<'_> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize> {
+        self.fd.write(buf)
     }
     fn flush(&mut self) -> Result<()> {
         Ok(())
@@ -426,12 +515,14 @@ impl Write for Stderr {
 
 #[doc(hidden)]
 pub fn _print(args: fmt::Arguments) {
-    let _ = stdout().write_fmt(args);
+    // Hold the stdout lock across the whole format so concurrent prints from
+    // multiple threads don't interleave mid-line.
+    let _ = stdout().lock().write_fmt(args);
 }
 
 #[doc(hidden)]
 pub fn _eprint(args: fmt::Arguments) {
-    let _ = stderr().write_fmt(args);
+    let _ = stderr().lock().write_fmt(args);
 }
 
 // ---------------------------------------------------------------------------

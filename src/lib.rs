@@ -88,7 +88,8 @@ pub use syscall::Errno;
 // intrinsics are NOT here: in a normal build they come from crt0/libc/the
 // unwinder, and in a libc-free build from the fullrust toolchain.
 #[cfg(feature = "rt")]
-mod panic;
+#[path = "panic.rs"]
+mod panic_impl;
 
 // ---------------------------------------------------------------------------
 // `std`-shaped re-exports of `core` + `alloc`, so the many `std::mem`,
@@ -109,7 +110,32 @@ pub use core::{
 pub use alloc::{borrow, boxed, fmt, format, rc, string, vec};
 
 /// `std::panic` subset. Under `panic = "abort"` there is no unwinding, so
-/// `catch_unwind` simply runs the closure (a panic aborts the process).
-pub mod panicking {
-    pub use core::panic::{Location, PanicInfo};
+/// `catch_unwind` simply runs the closure (a panic aborts the process, so it
+/// never actually returns `Err`); the signature mirrors `std`.
+pub mod panic {
+    pub use core::panic::{
+        AssertUnwindSafe, Location, PanicInfo, RefUnwindSafe, UnwindSafe,
+    };
+    use alloc::boxed::Box;
+    use core::any::Any;
+
+    /// Run `f`, catching a panic. With `panic = "abort"` a panic aborts the
+    /// process, so this always returns `Ok`.
+    pub fn catch_unwind<F: FnOnce() -> R + UnwindSafe, R>(
+        f: F,
+    ) -> Result<R, Box<dyn Any + Send + 'static>> {
+        Ok(f())
+    }
+
+    /// Resume an unwind. With `panic = "abort"` there is nothing to resume, so
+    /// this aborts.
+    pub fn resume_unwind(_payload: Box<dyn Any + Send>) -> ! {
+        crate::process::abort()
+    }
+
+    /// No-op panic-hook setter (we always print + abort).
+    pub fn set_hook(_hook: Box<dyn Fn(&PanicInfo<'_>) + Sync + Send + 'static>) {}
 }
+
+#[doc(hidden)]
+pub use panic as panicking;
