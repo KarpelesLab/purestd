@@ -53,6 +53,7 @@ pub mod nr {
     pub const WAIT4: usize = C | 7;
     pub const DUP2: usize = C | 90;
     pub const PIPE: usize = C | 42;
+    pub const SYSCTL: usize = C | 202;
     /// Darwin has no thread groups; map the Linux name to plain `exit`.
     pub const EXIT_GROUP: usize = EXIT;
     /// Linux has a dedicated `getrandom`; Darwin uses `getentropy`.

@@ -114,6 +114,8 @@ pub mod nr {
     pub const WAIT4: usize = 260;
     pub const PIPE2: usize = 59;
     pub const DUP3: usize = 24;
+    pub const FCNTL: usize = 25;
+    pub const SCHED_GETAFFINITY: usize = 123;
 }
 
 pub const AT_FDCWD: isize = -100;

@@ -49,3 +49,4 @@ jobs:
           check "synctest: OK"            "$B/synctest"
           check "fstest: OK"              "$B/fstest"
           check "proctest: OK"            "$B/proctest"
+          check "misc_test: OK"           "$B/misc_test"

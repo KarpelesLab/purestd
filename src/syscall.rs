@@ -616,3 +616,53 @@ pub fn exit_group(code: i32) -> ! {
         core::hint::spin_loop();
     }
 }
+
+/// `fcntl(fd, cmd, arg)`.
+#[inline]
+pub fn fcntl(fd: i32, cmd: i32, arg: i32) -> Result<i32, Errno> {
+    from_ret(unsafe { arch::syscall3(nr::FCNTL, fd as usize, cmd as usize, arg as usize) })
+        .map(|r| r as i32)
+}
+
+/// Number of CPUs available to the process.
+#[inline]
+pub fn num_cpus() -> usize {
+    #[cfg(target_os = "linux")]
+    {
+        // sched_getaffinity(0, sizeof(mask), &mask) -> bytes; popcount the mask.
+        let mut mask = [0u8; 128];
+        let r = from_ret(unsafe {
+            arch::syscall3(nr::SCHED_GETAFFINITY, 0, mask.len(), mask.as_mut_ptr() as usize)
+        });
+        match r {
+            Ok(n) => {
+                let n = core::cmp::min(n, mask.len());
+                let count: u32 = mask[..n].iter().map(|b| b.count_ones()).sum();
+                count.max(1) as usize
+            }
+            Err(_) => 1,
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // sysctl([CTL_HW=6, HW_NCPU=3]) -> int
+        let mib = [6i32, 3i32];
+        let mut out = 0i32;
+        let mut len = core::mem::size_of::<i32>();
+        let r = from_ret(unsafe {
+            arch::syscall6(
+                nr::SYSCTL,
+                mib.as_ptr() as usize,
+                2,
+                &mut out as *mut i32 as usize,
+                &mut len as *mut usize as usize,
+                0,
+                0,
+            )
+        });
+        match r {
+            Ok(_) if out > 0 => out as usize,
+            _ => 1,
+        }
+    }
+}

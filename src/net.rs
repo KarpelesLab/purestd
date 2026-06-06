@@ -587,3 +587,110 @@ impl crate::os::fd::AsRawFd for UdpSocket {
         self.0 .0
     }
 }
+
+// ---------------------------------------------------------------------------
+// Socket options
+// ---------------------------------------------------------------------------
+
+const IPPROTO_TCP: i32 = 6;
+const IPPROTO_IP: i32 = 0;
+const TCP_NODELAY: i32 = 1;
+const MSG_PEEK: i32 = 2;
+const F_GETFL: i32 = 3;
+const F_SETFL: i32 = 4;
+
+#[cfg(target_os = "macos")]
+mod opt {
+    pub const SO_RCVTIMEO: i32 = 0x1006;
+    pub const SO_SNDTIMEO: i32 = 0x1005;
+    pub const IP_TTL: i32 = 4;
+    pub const O_NONBLOCK: i32 = 0x0004;
+}
+#[cfg(not(target_os = "macos"))]
+mod opt {
+    pub const SO_RCVTIMEO: i32 = 20;
+    pub const SO_SNDTIMEO: i32 = 21;
+    pub const IP_TTL: i32 = 2;
+    pub const O_NONBLOCK: i32 = 0x800;
+}
+
+fn encode_timeval(dur: Option<core::time::Duration>) -> [u8; 16] {
+    let mut tv = [0u8; 16];
+    if let Some(d) = dur {
+        tv[0..8].copy_from_slice(&(d.as_secs() as i64).to_ne_bytes());
+        #[cfg(target_os = "macos")]
+        tv[8..12].copy_from_slice(&(d.subsec_micros() as i32).to_ne_bytes());
+        #[cfg(not(target_os = "macos"))]
+        tv[8..16].copy_from_slice(&(d.subsec_micros() as i64).to_ne_bytes());
+    }
+    tv
+}
+
+fn set_nonblocking_fd(fd: i32, nonblocking: bool) -> io::Result<()> {
+    let flags = syscall::fcntl(fd, F_GETFL, 0).map_err(Error::from)?;
+    let new = if nonblocking {
+        flags | opt::O_NONBLOCK
+    } else {
+        flags & !opt::O_NONBLOCK
+    };
+    syscall::fcntl(fd, F_SETFL, new).map_err(Error::from).map(|_| ())
+}
+
+impl TcpStream {
+    pub fn set_nodelay(&self, nodelay: bool) -> io::Result<()> {
+        let v: i32 = nodelay as i32;
+        syscall::setsockopt(self.0 .0, IPPROTO_TCP, TCP_NODELAY, &v as *const i32 as *const u8, 4)
+            .map_err(Error::from)
+    }
+    pub fn set_ttl(&self, ttl: u32) -> io::Result<()> {
+        let v = ttl as i32;
+        syscall::setsockopt(self.0 .0, IPPROTO_IP, opt::IP_TTL, &v as *const i32 as *const u8, 4)
+            .map_err(Error::from)
+    }
+    pub fn set_read_timeout(&self, dur: Option<core::time::Duration>) -> io::Result<()> {
+        let tv = encode_timeval(dur);
+        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_RCVTIMEO, tv.as_ptr(), 16)
+            .map_err(Error::from)
+    }
+    pub fn set_write_timeout(&self, dur: Option<core::time::Duration>) -> io::Result<()> {
+        let tv = encode_timeval(dur);
+        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_SNDTIMEO, tv.as_ptr(), 16)
+            .map_err(Error::from)
+    }
+    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        set_nonblocking_fd(self.0 .0, nonblocking)
+    }
+    pub fn try_clone(&self) -> io::Result<TcpStream> {
+        let fd = syscall::dup(self.0 .0).map_err(Error::from)?;
+        Ok(TcpStream(Socket(fd)))
+    }
+    pub fn peek(&self, buf: &mut [u8]) -> io::Result<usize> {
+        syscall::recvfrom(self.0 .0, buf, MSG_PEEK, core::ptr::null_mut(), core::ptr::null_mut())
+            .map_err(Error::from)
+    }
+}
+
+impl TcpListener {
+    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        set_nonblocking_fd(self.0 .0, nonblocking)
+    }
+    pub fn try_clone(&self) -> io::Result<TcpListener> {
+        let fd = syscall::dup(self.0 .0).map_err(Error::from)?;
+        Ok(TcpListener(Socket(fd)))
+    }
+}
+
+impl UdpSocket {
+    pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
+        set_nonblocking_fd(self.0 .0, nonblocking)
+    }
+    pub fn set_read_timeout(&self, dur: Option<core::time::Duration>) -> io::Result<()> {
+        let tv = encode_timeval(dur);
+        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_RCVTIMEO, tv.as_ptr(), 16)
+            .map_err(Error::from)
+    }
+    pub fn try_clone(&self) -> io::Result<UdpSocket> {
+        let fd = syscall::dup(self.0 .0).map_err(Error::from)?;
+        Ok(UdpSocket(Socket(fd)))
+    }
+}

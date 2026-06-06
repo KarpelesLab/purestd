@@ -211,3 +211,10 @@ pub fn current() -> Thread {
         id: ThreadId(0),
     }
 }
+
+/// Returns an estimate of the number of hardware threads available.
+pub fn available_parallelism() -> crate::io::Result<core::num::NonZeroUsize> {
+    let n = crate::syscall::num_cpus();
+    core::num::NonZeroUsize::new(n)
+        .ok_or_else(|| crate::io::Error::from(crate::io::ErrorKind::Other))
+}
