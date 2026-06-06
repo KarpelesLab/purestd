@@ -84,6 +84,11 @@ pub mod nr {
     pub const CHDIR: usize = 80;
     pub const GETCWD: usize = 79;
     pub const NANOSLEEP_LX: usize = 35;
+    pub const FORK: usize = 57;
+    pub const EXECVE: usize = 59;
+    pub const WAIT4: usize = 61;
+    pub const PIPE2: usize = 293;
+    pub const DUP2: usize = 33;
 }
 
 pub const AT_FDCWD: isize = -100;

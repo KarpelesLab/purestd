@@ -489,6 +489,120 @@ pub fn shutdown(fd: i32, how: i32) -> Result<(), Errno> {
     from_ret(unsafe { arch::syscall2(nr::SHUTDOWN, fd as usize, how as usize) }).map(|_| ())
 }
 
+// ---- process creation ----
+
+/// `fork()` -> 0 in the child, child pid in the parent.
+///
+/// On macOS the syscall reports child-vs-parent in `x1` (the classic Darwin fork
+/// quirk), so we read it directly.
+#[inline]
+pub fn fork() -> Result<i32, Errno> {
+    #[cfg(target_os = "macos")]
+    {
+        let (x0, x1, err): (usize, usize, usize);
+        unsafe {
+            core::arch::asm!(
+                "svc #0x80",
+                "cset {e}, cs",
+                inout("x16") (0x2000000usize | 2) => _,
+                lateout("x17") _,
+                out("x0") x0,
+                out("x1") x1,
+                e = out(reg) err,
+                options(nostack),
+            );
+        }
+        if err != 0 {
+            return Err(Errno(x0 as i32));
+        }
+        // x1 == 1 marks the child; its x0 holds the parent's pid, not 0.
+        if x1 == 1 {
+            Ok(0)
+        } else {
+            Ok(x0 as i32)
+        }
+    }
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    {
+        from_ret(unsafe { arch::syscall0(nr::FORK) }).map(|p| p as i32)
+    }
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        // aarch64 Linux has no `fork`; clone with SIGCHLD and no new stack.
+        const SIGCHLD: usize = 17;
+        from_ret(unsafe { arch::syscall5(nr::CLONE, SIGCHLD, 0, 0, 0, 0) }).map(|p| p as i32)
+    }
+}
+
+/// `execve(path, argv, envp)` — only returns (an error) if exec fails.
+#[inline]
+pub fn execve(path: &core::ffi::CStr, argv: *const *const u8, envp: *const *const u8) -> Errno {
+    let r = unsafe {
+        arch::syscall3(nr::EXECVE, path.as_ptr() as usize, argv as usize, envp as usize)
+    };
+    Errno(-(r as isize) as i32)
+}
+
+/// `wait4(pid, &status, options, 0)` -> the reaped pid.
+#[inline]
+pub fn wait4(pid: i32, status: &mut i32, options: i32) -> Result<i32, Errno> {
+    from_ret(unsafe {
+        arch::syscall4(
+            nr::WAIT4,
+            pid as usize,
+            status as *mut i32 as usize,
+            options as usize,
+            0,
+        )
+    })
+    .map(|p| p as i32)
+}
+
+/// `pipe()` -> (read_fd, write_fd).
+#[inline]
+pub fn pipe() -> Result<(i32, i32), Errno> {
+    #[cfg(target_os = "macos")]
+    {
+        // Darwin returns the two fds in x0/x1.
+        let (r, w, err): (usize, usize, usize);
+        unsafe {
+            core::arch::asm!(
+                "svc #0x80",
+                "cset {e}, cs",
+                inout("x16") (0x2000000usize | 42) => _,
+                lateout("x17") _,
+                out("x0") r,
+                out("x1") w,
+                e = out(reg) err,
+                options(nostack),
+            );
+        }
+        if err != 0 {
+            return Err(Errno(r as i32));
+        }
+        Ok((r as i32, w as i32))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let mut fds = [0i32; 2];
+        from_ret(unsafe { arch::syscall2(nr::PIPE2, fds.as_mut_ptr() as usize, 0) })?;
+        Ok((fds[0], fds[1]))
+    }
+}
+
+/// `dup2(old, new)` — make `new` refer to `old`.
+#[inline]
+pub fn dup2(old: i32, new: i32) -> Result<(), Errno> {
+    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    {
+        from_ret(unsafe { arch::syscall3(nr::DUP3, old as usize, new as usize, 0) }).map(|_| ())
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+    {
+        from_ret(unsafe { arch::syscall2(nr::DUP2, old as usize, new as usize) }).map(|_| ())
+    }
+}
+
 /// Terminate the whole process with `code`. Never returns.
 #[inline]
 pub fn exit_group(code: i32) -> ! {

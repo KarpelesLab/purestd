@@ -48,6 +48,11 @@ pub mod nr {
     pub const GETDIRENTRIES64: usize = C | 344;
     pub const CHDIR: usize = C | 12;
     pub const FCNTL: usize = C | 92;
+    pub const FORK: usize = C | 2;
+    pub const EXECVE: usize = C | 59;
+    pub const WAIT4: usize = C | 7;
+    pub const DUP2: usize = C | 90;
+    pub const PIPE: usize = C | 42;
     /// Darwin has no thread groups; map the Linux name to plain `exit`.
     pub const EXIT_GROUP: usize = EXIT;
     /// Linux has a dedicated `getrandom`; Darwin uses `getentropy`.

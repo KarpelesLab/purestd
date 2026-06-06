@@ -110,6 +110,10 @@ pub mod nr {
     pub const GETDENTS64: usize = 61;
     pub const CHDIR: usize = 49;
     pub const GETCWD: usize = 17;
+    pub const EXECVE: usize = 221;
+    pub const WAIT4: usize = 260;
+    pub const PIPE2: usize = 59;
+    pub const DUP3: usize = 24;
 }
 
 pub const AT_FDCWD: isize = -100;
