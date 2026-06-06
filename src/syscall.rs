@@ -51,6 +51,32 @@ pub fn write(fd: i32, buf: &[u8]) -> Result<usize, Errno> {
     from_ret(unsafe { arch::syscall3(nr::WRITE, fd as usize, buf.as_ptr() as usize, buf.len()) })
 }
 
+/// A kernel `struct iovec`: a (base, len) pair. Same layout on every supported
+/// target (a pointer followed by a `size_t`).
+#[repr(C)]
+pub struct IoVec {
+    pub base: *const u8,
+    pub len: usize,
+}
+
+/// `readv(fd, iov, iovcnt)` — scatter read. `iov` points to `cnt` `IoVec`s.
+///
+/// # Safety
+/// Every `IoVec` must describe a valid, writable region for the call's duration.
+#[inline]
+pub unsafe fn readv(fd: i32, iov: *const IoVec, cnt: usize) -> Result<usize, Errno> {
+    from_ret(arch::syscall3(nr::READV, fd as usize, iov as usize, cnt))
+}
+
+/// `writev(fd, iov, iovcnt)` — gather write.
+///
+/// # Safety
+/// Every `IoVec` must describe a valid, readable region for the call's duration.
+#[inline]
+pub unsafe fn writev(fd: i32, iov: *const IoVec, cnt: usize) -> Result<usize, Errno> {
+    from_ret(arch::syscall3(nr::WRITEV, fd as usize, iov as usize, cnt))
+}
+
 /// `close(fd)`.
 #[inline]
 pub fn close(fd: i32) -> Result<(), Errno> {

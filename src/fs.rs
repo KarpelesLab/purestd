@@ -65,11 +65,17 @@ impl Read for File {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         io::Fd(self.fd).read(buf)
     }
+    fn read_vectored(&mut self, bufs: &mut [io::IoSliceMut<'_>]) -> io::Result<usize> {
+        io::Fd(self.fd).read_vectored(bufs)
+    }
 }
 
 impl Write for File {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         io::Fd(self.fd).write(buf)
+    }
+    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        io::Fd(self.fd).write_vectored(bufs)
     }
     fn flush(&mut self) -> io::Result<()> {
         Ok(())

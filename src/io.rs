@@ -200,12 +200,67 @@ fn errno_kind(c: i32) -> ErrorKind {
 }
 
 // ---------------------------------------------------------------------------
+// Vectored I/O buffers
+// ---------------------------------------------------------------------------
+
+/// A buffer for gathered writes. Drop-in for `std::io::IoSlice`.
+#[derive(Copy, Clone)]
+pub struct IoSlice<'a>(&'a [u8]);
+impl<'a> IoSlice<'a> {
+    #[inline]
+    pub fn new(buf: &'a [u8]) -> IoSlice<'a> {
+        IoSlice(buf)
+    }
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        self.0
+    }
+}
+impl core::ops::Deref for IoSlice<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.0
+    }
+}
+
+/// A buffer for scattered reads. Drop-in for `std::io::IoSliceMut`.
+pub struct IoSliceMut<'a>(&'a mut [u8]);
+impl<'a> IoSliceMut<'a> {
+    #[inline]
+    pub fn new(buf: &'a mut [u8]) -> IoSliceMut<'a> {
+        IoSliceMut(buf)
+    }
+}
+impl core::ops::Deref for IoSliceMut<'_> {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        self.0
+    }
+}
+impl core::ops::DerefMut for IoSliceMut<'_> {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        self.0
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Read / Write traits
 // ---------------------------------------------------------------------------
 
 /// The `std::io::Read` trait (core methods + the common provided ones).
 pub trait Read {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize>;
+
+    /// Scatter read into `bufs`. The default fills the first non-empty buffer
+    /// with a single [`read`](Read::read); [`Fd`] overrides it with `readv`.
+    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+        for b in bufs {
+            if !b.0.is_empty() {
+                return self.read(b.0);
+            }
+        }
+        self.read(&mut [])
+    }
 
     /// Read the entire input into `buf`, returning the number of bytes read.
     fn read_to_end(&mut self, buf: &mut Vec<u8>) -> Result<usize> {
@@ -250,6 +305,17 @@ pub trait Read {
 pub trait Write {
     fn write(&mut self, buf: &[u8]) -> Result<usize>;
     fn flush(&mut self) -> Result<()>;
+
+    /// Gather write from `bufs`. The default writes the first non-empty buffer
+    /// with a single [`write`](Write::write); [`Fd`] overrides it with `writev`.
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+        for b in bufs {
+            if !b.0.is_empty() {
+                return self.write(b.0);
+            }
+        }
+        self.write(&[])
+    }
 
     /// Write the entire buffer, retrying short writes.
     fn write_all(&mut self, mut buf: &[u8]) -> Result<()> {
@@ -349,12 +415,36 @@ impl Read for Fd {
             }
         }
     }
+    fn read_vectored(&mut self, bufs: &mut [IoSliceMut<'_>]) -> Result<usize> {
+        let iov: Vec<syscall::IoVec> = bufs
+            .iter()
+            .map(|b| syscall::IoVec { base: b.0.as_ptr(), len: b.0.len() })
+            .collect();
+        loop {
+            match unsafe { syscall::readv(self.0, iov.as_ptr(), iov.len()) } {
+                Err(Errno(4)) => continue,
+                other => return other.map_err(Error::from),
+            }
+        }
+    }
 }
 
 impl Write for Fd {
     fn write(&mut self, buf: &[u8]) -> Result<usize> {
         loop {
             match syscall::write(self.0, buf) {
+                Err(Errno(4)) => continue,
+                other => return other.map_err(Error::from),
+            }
+        }
+    }
+    fn write_vectored(&mut self, bufs: &[IoSlice<'_>]) -> Result<usize> {
+        let iov: Vec<syscall::IoVec> = bufs
+            .iter()
+            .map(|b| syscall::IoVec { base: b.0.as_ptr(), len: b.0.len() })
+            .collect();
+        loop {
+            match unsafe { syscall::writev(self.0, iov.as_ptr(), iov.len()) } {
                 Err(Errno(4)) => continue,
                 other => return other.map_err(Error::from),
             }

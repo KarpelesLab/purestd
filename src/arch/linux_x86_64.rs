@@ -42,6 +42,8 @@ syscall_fn!(syscall6; a => "rdi", b => "rsi", c => "rdx", d => "r10", e => "r8",
 pub mod nr {
     pub const READ: usize = 0;
     pub const WRITE: usize = 1;
+    pub const READV: usize = 19;
+    pub const WRITEV: usize = 20;
     pub const CLOSE: usize = 3;
     pub const LSEEK: usize = 8;
     pub const MMAP: usize = 9;

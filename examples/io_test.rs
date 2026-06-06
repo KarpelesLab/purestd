@@ -38,6 +38,32 @@ fn main() {
     println!("file = {:?}", purestd::fs::read_to_string(p).unwrap());
     purestd::fs::remove_file(p).unwrap();
 
+    // Vectored I/O: writev a file from three slices, then readv it back into two.
+    {
+        use purestd::io::{IoSlice, IoSliceMut};
+        let vp = "/tmp/purestd_iovec.txt";
+        {
+            let mut f = purestd::fs::File::create(vp).unwrap();
+            let bufs = [IoSlice::new(b"foo"), IoSlice::new(b"-"), IoSlice::new(b"bar")];
+            let n = f.write_vectored(&bufs).unwrap();
+            println!("writev wrote {} bytes (expect 7)", n);
+        }
+        let mut f = purestd::fs::File::open(vp).unwrap();
+        let mut a = [0u8; 4];
+        let mut b = [0u8; 8];
+        let n = {
+            let mut bufs = [IoSliceMut::new(&mut a), IoSliceMut::new(&mut b)];
+            f.read_vectored(&mut bufs).unwrap()
+        };
+        println!(
+            "readv read {} bytes: {:?}{:?}",
+            n,
+            core::str::from_utf8(&a).unwrap(),
+            core::str::from_utf8(&b[..n.saturating_sub(4)]).unwrap()
+        );
+        purestd::fs::remove_file(vp).unwrap();
+    }
+
     // monotonic Instant: elapsed should be small and non-negative
     let t = purestd::time::Instant::now();
     let mut acc = 0u64;

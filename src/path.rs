@@ -279,3 +279,80 @@ impl PathBuf {
         true
     }
 }
+
+// ---------------------------------------------------------------------------
+// Components / ancestors
+// ---------------------------------------------------------------------------
+
+/// A single component of a path. Drop-in-ish for `std::path::Component`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Component<'a> {
+    RootDir,
+    CurDir,
+    ParentDir,
+    Normal(&'a str),
+}
+impl<'a> Component<'a> {
+    pub fn as_str(&self) -> &'a str {
+        match self {
+            Component::RootDir => "/",
+            Component::CurDir => ".",
+            Component::ParentDir => "..",
+            Component::Normal(s) => s,
+        }
+    }
+}
+
+/// Iterator over [`Component`]s. Drop-in-ish for `std::path::Components`.
+pub struct Components<'a> {
+    rest: &'a str,
+    root_pending: bool,
+}
+impl<'a> Iterator for Components<'a> {
+    type Item = Component<'a>;
+    fn next(&mut self) -> Option<Component<'a>> {
+        if self.root_pending {
+            self.root_pending = false;
+            return Some(Component::RootDir);
+        }
+        loop {
+            self.rest = self.rest.trim_start_matches('/');
+            if self.rest.is_empty() {
+                return None;
+            }
+            let end = self.rest.find('/').unwrap_or(self.rest.len());
+            let seg = &self.rest[..end];
+            self.rest = &self.rest[end..];
+            match seg {
+                "." => continue,
+                ".." => return Some(Component::ParentDir),
+                s => return Some(Component::Normal(s)),
+            }
+        }
+    }
+}
+
+/// Iterator over a path and its ancestors. Drop-in for `std::path::Ancestors`.
+pub struct Ancestors<'a> {
+    next: Option<&'a Path>,
+}
+impl<'a> Iterator for Ancestors<'a> {
+    type Item = &'a Path;
+    fn next(&mut self) -> Option<&'a Path> {
+        let cur = self.next?;
+        self.next = cur.parent();
+        Some(cur)
+    }
+}
+
+impl Path {
+    pub fn components(&self) -> Components<'_> {
+        Components {
+            rest: &self.0,
+            root_pending: self.0.starts_with('/'),
+        }
+    }
+    pub fn ancestors(&self) -> Ancestors<'_> {
+        Ancestors { next: Some(self) }
+    }
+}

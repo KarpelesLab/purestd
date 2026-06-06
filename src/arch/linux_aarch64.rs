@@ -74,6 +74,8 @@ pub mod nr {
     pub const LSEEK: usize = 62;
     pub const READ: usize = 63;
     pub const WRITE: usize = 64;
+    pub const READV: usize = 65;
+    pub const WRITEV: usize = 66;
     pub const EXIT: usize = 93;
     pub const EXIT_GROUP: usize = 94;
     pub const CLOCK_GETTIME: usize = 113;

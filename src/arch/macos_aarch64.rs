@@ -14,6 +14,8 @@ pub mod nr {
     pub const EXIT: usize = C | 1;
     pub const READ: usize = C | 3;
     pub const WRITE: usize = C | 4;
+    pub const READV: usize = C | 120;
+    pub const WRITEV: usize = C | 121;
     pub const OPEN: usize = C | 5;
     pub const CLOSE: usize = C | 6;
     pub const GETPID: usize = C | 20;

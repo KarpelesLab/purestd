@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 use purestd::prelude::*;
-use purestd::sync::{mpsc, Arc, Barrier, Condvar, LazyLock, Mutex};
+use purestd::sync::{mpsc, Arc, Barrier, Condvar, LazyLock, Mutex, RwLock};
 use purestd::thread;
 
 static LAZY: LazyLock<u64> = LazyLock::new(|| {
@@ -52,6 +52,35 @@ fn main() {
     let mut sum = 0u64;
     while let Ok(v) = rx.recv() { count += 1; sum += v; }
     println!("mpsc: got {} msgs, sum {}", count, sum);
+
+    // futex RwLock: many readers + writers contend on the same lock. 8 writers
+    // each bump the counter 5000x; 8 readers each take 5000 read locks and
+    // observe a monotonically non-decreasing value. Final must be 40000.
+    let rw = Arc::new(RwLock::new(0u64));
+    let mut hs = Vec::new();
+    for _ in 0..8 {
+        let rw = rw.clone();
+        hs.push(thread::spawn(move || for _ in 0..5_000 { *rw.write().unwrap() += 1; }));
+    }
+    let bad = Arc::new(Mutex::new(0u64));
+    for _ in 0..8 {
+        let rw = rw.clone();
+        let bad = bad.clone();
+        hs.push(thread::spawn(move || {
+            let mut last = 0u64;
+            for _ in 0..5_000 {
+                let v = *rw.read().unwrap();
+                if v < last { *bad.lock().unwrap() += 1; }
+                last = v;
+            }
+        }));
+    }
+    for h in hs { h.join().unwrap(); }
+    println!(
+        "rwlock (8w*5000) = {} (expect 40000), ordering violations = {} (expect 0)",
+        *rw.read().unwrap(),
+        *bad.lock().unwrap()
+    );
 
     println!("LazyLock = {} (expect 5050)", *LAZY);
     println!("synctest: OK");

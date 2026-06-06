@@ -19,6 +19,16 @@ fn main() {
     println!("with_ext exe = {}", p.with_extension(&"exe").display());
     println!("/bin exists = {}, is_dir = {}", Path::new("/bin").exists(), Path::new("/bin").is_dir());
 
+    // Components: leading RootDir, then normals; "." dropped, ".." kept.
+    let comps: Vec<&str> = Path::new("/usr/./local/../bin")
+        .components()
+        .map(|c| c.as_str())
+        .collect();
+    println!("components = {:?}", comps);
+    // ancestors: self, then each parent down to root.
+    let anc: Vec<&str> = Path::new("/a/b/c").ancestors().map(|p| p.as_str()).collect();
+    println!("ancestors = {:?}", anc);
+
     // net options on a loopback connection
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap();

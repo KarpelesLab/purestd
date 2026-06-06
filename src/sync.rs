@@ -2,16 +2,15 @@
 //! `Barrier`, `LazyLock`, and the `mpsc` channel — plus `Arc`/`Weak` from
 //! `alloc` and the `atomic` module from `core`.
 //!
-//! `Mutex` and `Condvar` block in the kernel via the futex (`futex` on Linux,
-//! `__ulock` on macOS). `RwLock` is still a spin lock (a futex version is on the
-//! roadmap).
+//! `Mutex`, `RwLock`, and `Condvar` all block in the kernel via the futex
+//! (`futex` on Linux, `__ulock` on macOS) — no busy-spinning under contention.
 
 pub use crate::alloc::sync::{Arc, Weak};
 pub use core::sync::atomic;
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
-use core::sync::atomic::{AtomicIsize, AtomicU32, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU8, Ordering};
 
 /// Sentinel poison error. These locks never poison (panics abort the process),
 /// so this is constructed only to satisfy the `std` return-type shape.
@@ -148,12 +147,21 @@ impl<T: ?Sized> Drop for MutexGuard<'_, T> {
 }
 
 // ---------------------------------------------------------------------------
-// RwLock (spin; -1 = write-locked, >0 = reader count)
+// RwLock (futex-backed; reader-preferring)
+//
+// `state` is a 32-bit word: the high bit (`RW_WRITER`) means write-locked, and
+// the low 31 bits count active readers. Contended readers and writers block in
+// the kernel on `state` via the futex, exactly like `Mutex`. When the last
+// reader or the writer releases, it wakes everyone so a waiting writer (or a
+// herd of readers) can retry. Reader-preferring: a steady stream of readers can
+// starve a writer — acceptable, and what a simple `std`-shaped lock needs.
 // ---------------------------------------------------------------------------
 
-/// A spin-based reader-writer lock. Drop-in for `std::sync::RwLock`.
+const RW_WRITER: u32 = 1 << 31;
+
+/// A futex-backed reader-writer lock. Drop-in for `std::sync::RwLock`.
 pub struct RwLock<T: ?Sized> {
-    state: AtomicIsize,
+    state: AtomicU32,
     data: UnsafeCell<T>,
 }
 unsafe impl<T: ?Sized + Send> Send for RwLock<T> {}
@@ -162,7 +170,7 @@ unsafe impl<T: ?Sized + Send + Sync> Sync for RwLock<T> {}
 impl<T> RwLock<T> {
     pub const fn new(value: T) -> RwLock<T> {
         RwLock {
-            state: AtomicIsize::new(0),
+            state: AtomicU32::new(0),
             data: UnsafeCell::new(value),
         }
     }
@@ -174,27 +182,62 @@ impl<T> RwLock<T> {
 impl<T: ?Sized> RwLock<T> {
     pub fn read(&self) -> LockResult<RwLockReadGuard<'_, T>> {
         loop {
-            let s = self.state.load(Ordering::Relaxed);
-            if s >= 0
-                && self
+            let s = self.state.load(Ordering::Acquire);
+            if s & RW_WRITER == 0 {
+                // No writer: try to bump the reader count.
+                if self
                     .state
                     .compare_exchange_weak(s, s + 1, Ordering::Acquire, Ordering::Relaxed)
                     .is_ok()
-            {
-                return Ok(RwLockReadGuard { lock: self });
+                {
+                    return Ok(RwLockReadGuard { lock: self });
+                }
+                // CAS lost a race; retry without sleeping.
+            } else {
+                // Writer holds it: sleep until `state` changes.
+                crate::sys_thread::futex_wait(&self.state, s);
             }
-            core::hint::spin_loop();
+        }
+    }
+    pub fn try_read(&self) -> Option<RwLockReadGuard<'_, T>> {
+        let s = self.state.load(Ordering::Acquire);
+        if s & RW_WRITER == 0
+            && self
+                .state
+                .compare_exchange(s, s + 1, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+        {
+            Some(RwLockReadGuard { lock: self })
+        } else {
+            None
         }
     }
     pub fn write(&self) -> LockResult<RwLockWriteGuard<'_, T>> {
-        while self
-            .state
-            .compare_exchange_weak(0, -1, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            core::hint::spin_loop();
+        loop {
+            // Acquire only when fully unlocked (no readers, no writer).
+            if self
+                .state
+                .compare_exchange(0, RW_WRITER, Ordering::Acquire, Ordering::Relaxed)
+                .is_ok()
+            {
+                return Ok(RwLockWriteGuard { lock: self });
+            }
+            let s = self.state.load(Ordering::Relaxed);
+            if s != 0 {
+                crate::sys_thread::futex_wait(&self.state, s);
+            }
         }
-        Ok(RwLockWriteGuard { lock: self })
+    }
+    pub fn try_write(&self) -> Option<RwLockWriteGuard<'_, T>> {
+        if self
+            .state
+            .compare_exchange(0, RW_WRITER, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
+        {
+            Some(RwLockWriteGuard { lock: self })
+        } else {
+            None
+        }
     }
 }
 
@@ -209,7 +252,10 @@ impl<T: ?Sized> Deref for RwLockReadGuard<'_, T> {
 }
 impl<T: ?Sized> Drop for RwLockReadGuard<'_, T> {
     fn drop(&mut self) {
-        self.lock.state.fetch_sub(1, Ordering::Release);
+        // If we were the last reader, a writer may be waiting — wake the herd.
+        if self.lock.state.fetch_sub(1, Ordering::Release) == 1 {
+            crate::sys_thread::futex_wake_all(&self.lock.state);
+        }
     }
 }
 
@@ -230,6 +276,8 @@ impl<T: ?Sized> DerefMut for RwLockWriteGuard<'_, T> {
 impl<T: ?Sized> Drop for RwLockWriteGuard<'_, T> {
     fn drop(&mut self) {
         self.lock.state.store(0, Ordering::Release);
+        // Wake every waiter: readers and/or a writer are all blocked on `state`.
+        crate::sys_thread::futex_wake_all(&self.lock.state);
     }
 }
 
