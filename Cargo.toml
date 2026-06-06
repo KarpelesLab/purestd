@@ -2,8 +2,13 @@
 name = "purestd"
 version = "0.0.1"
 edition = "2021"
+rust-version = "1.85"
 description = "A pure-Rust standard library replacement that talks to the kernel via raw syscalls only — no libc."
+repository = "https://github.com/KarpelesLab/purestd"
 license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["no_std", "std", "libc-free", "syscall", "freestanding"]
+categories = ["no-std", "os::unix-apis"]
 
 [lib]
 # no_std library; built without the platform std/libc.
