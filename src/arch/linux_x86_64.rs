@@ -60,6 +60,18 @@ pub mod nr {
     pub const FUTEX: usize = 202;
     pub const CLONE: usize = 56;
     pub const GETTID: usize = 186;
+    // ---- sockets ----
+    pub const SOCKET: usize = 41;
+    pub const CONNECT: usize = 42;
+    pub const ACCEPT: usize = 43;
+    pub const BIND: usize = 49;
+    pub const LISTEN: usize = 50;
+    pub const GETSOCKNAME: usize = 51;
+    pub const GETPEERNAME: usize = 52;
+    pub const SENDTO: usize = 44;
+    pub const RECVFROM: usize = 45;
+    pub const SHUTDOWN: usize = 48;
+    pub const SETSOCKOPT: usize = 54;
 }
 
 pub const AT_FDCWD: isize = -100;

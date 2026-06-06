@@ -44,3 +44,4 @@ jobs:
           check "checks passed"           "$B/mapstress"
           check "reference vectors match" "$B/sipcheck"
           check "counter = 80000"         "$B/threads"
+          check "net: OK"                 "$B/net"

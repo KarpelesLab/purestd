@@ -104,8 +104,12 @@ Threads are real OS threads: `thread::spawn`/`JoinHandle::join`/`Builder`,
 `thread_create_running` (no libpthread — see [`docs/macos-threads.md`](docs/macos-threads.md));
 on Linux they use `clone` + `futex`. Exercised on every target in CI.
 
-Not yet: `process::Command`, sockets (`net`), buffered readers/writers, TLS,
-thread names/parking. `net` is a compiling placeholder.
+`net`: `TcpStream`, `TcpListener`, `UdpSocket`, and `ToSocketAddrs` over raw
+socket syscalls, with name resolution from `/etc/hosts` plus plain DNS
+(`/etc/resolv.conf`, A/AAAA over UDP) — no NSS.
+
+Not yet: `process::Command`, buffered readers/writers, TLS, `Condvar`,
+thread names/parking.
 
 ## License
 

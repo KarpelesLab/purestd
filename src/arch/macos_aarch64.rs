@@ -25,6 +25,18 @@ pub mod nr {
     pub const MMAP: usize = C | 197;
     pub const OPENAT: usize = C | 463;
     pub const GETENTROPY: usize = C | 500;
+    // ---- sockets (BSD numbers) ----
+    pub const SOCKET: usize = C | 97;
+    pub const CONNECT: usize = C | 98;
+    pub const ACCEPT: usize = C | 30;
+    pub const BIND: usize = C | 104;
+    pub const LISTEN: usize = C | 106;
+    pub const GETSOCKNAME: usize = C | 32;
+    pub const GETPEERNAME: usize = C | 31;
+    pub const SENDTO: usize = C | 133;
+    pub const RECVFROM: usize = C | 29;
+    pub const SETSOCKOPT: usize = C | 105;
+    pub const SHUTDOWN: usize = C | 134;
     /// Darwin has no thread groups; map the Linux name to plain `exit`.
     pub const EXIT_GROUP: usize = EXIT;
     /// Linux has a dedicated `getrandom`; Darwin uses `getentropy`.

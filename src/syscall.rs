@@ -174,6 +174,126 @@ pub fn gettimeofday() -> Result<(u64, u64), Errno> {
     Ok((tv[0], tv[1]))
 }
 
+// ---- sockets ----
+
+/// `socket(domain, type, protocol)` -> fd.
+#[inline]
+pub fn socket(domain: i32, ty: i32, protocol: i32) -> Result<i32, Errno> {
+    from_ret(unsafe { arch::syscall3(nr::SOCKET, domain as usize, ty as usize, protocol as usize) })
+        .map(|fd| fd as i32)
+}
+
+/// `connect(fd, addr, addrlen)`.
+#[inline]
+pub fn connect(fd: i32, addr: *const u8, addrlen: u32) -> Result<(), Errno> {
+    from_ret(unsafe { arch::syscall3(nr::CONNECT, fd as usize, addr as usize, addrlen as usize) })
+        .map(|_| ())
+}
+
+/// `bind(fd, addr, addrlen)`.
+#[inline]
+pub fn bind(fd: i32, addr: *const u8, addrlen: u32) -> Result<(), Errno> {
+    from_ret(unsafe { arch::syscall3(nr::BIND, fd as usize, addr as usize, addrlen as usize) })
+        .map(|_| ())
+}
+
+/// `listen(fd, backlog)`.
+#[inline]
+pub fn listen(fd: i32, backlog: i32) -> Result<(), Errno> {
+    from_ret(unsafe { arch::syscall2(nr::LISTEN, fd as usize, backlog as usize) }).map(|_| ())
+}
+
+/// `accept(fd, addr, addrlen)` -> new fd.
+#[inline]
+pub fn accept(fd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<i32, Errno> {
+    from_ret(unsafe { arch::syscall3(nr::ACCEPT, fd as usize, addr as usize, addrlen as usize) })
+        .map(|fd| fd as i32)
+}
+
+/// `sendto(fd, buf, flags, addr, addrlen)` -> bytes sent.
+#[inline]
+pub fn sendto(
+    fd: i32,
+    buf: &[u8],
+    flags: i32,
+    addr: *const u8,
+    addrlen: u32,
+) -> Result<usize, Errno> {
+    from_ret(unsafe {
+        arch::syscall6(
+            nr::SENDTO,
+            fd as usize,
+            buf.as_ptr() as usize,
+            buf.len(),
+            flags as usize,
+            addr as usize,
+            addrlen as usize,
+        )
+    })
+}
+
+/// `recvfrom(fd, buf, flags, addr, addrlen)` -> bytes received.
+#[inline]
+pub fn recvfrom(
+    fd: i32,
+    buf: &mut [u8],
+    flags: i32,
+    addr: *mut u8,
+    addrlen: *mut u32,
+) -> Result<usize, Errno> {
+    from_ret(unsafe {
+        arch::syscall6(
+            nr::RECVFROM,
+            fd as usize,
+            buf.as_mut_ptr() as usize,
+            buf.len(),
+            flags as usize,
+            addr as usize,
+            addrlen as usize,
+        )
+    })
+}
+
+/// `setsockopt(fd, level, name, val, len)`.
+#[inline]
+pub fn setsockopt(fd: i32, level: i32, name: i32, val: *const u8, len: u32) -> Result<(), Errno> {
+    from_ret(unsafe {
+        arch::syscall5(
+            nr::SETSOCKOPT,
+            fd as usize,
+            level as usize,
+            name as usize,
+            val as usize,
+            len as usize,
+        )
+    })
+    .map(|_| ())
+}
+
+/// `getsockname(fd, addr, addrlen)`.
+#[inline]
+pub fn getsockname(fd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), Errno> {
+    from_ret(unsafe {
+        arch::syscall3(nr::GETSOCKNAME, fd as usize, addr as usize, addrlen as usize)
+    })
+    .map(|_| ())
+}
+
+/// `getpeername(fd, addr, addrlen)`.
+#[inline]
+pub fn getpeername(fd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), Errno> {
+    from_ret(unsafe {
+        arch::syscall3(nr::GETPEERNAME, fd as usize, addr as usize, addrlen as usize)
+    })
+    .map(|_| ())
+}
+
+/// `shutdown(fd, how)`.
+#[inline]
+pub fn shutdown(fd: i32, how: i32) -> Result<(), Errno> {
+    from_ret(unsafe { arch::syscall2(nr::SHUTDOWN, fd as usize, how as usize) }).map(|_| ())
+}
+
 /// Terminate the whole process with `code`. Never returns.
 #[inline]
 pub fn exit_group(code: i32) -> ! {

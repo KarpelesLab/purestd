@@ -88,6 +88,18 @@ pub mod nr {
     pub const FUTEX: usize = 98;
     pub const CLONE: usize = 220;
     pub const GETTID: usize = 178;
+    // ---- sockets (asm-generic) ----
+    pub const SOCKET: usize = 198;
+    pub const BIND: usize = 200;
+    pub const LISTEN: usize = 201;
+    pub const ACCEPT: usize = 202;
+    pub const CONNECT: usize = 203;
+    pub const GETSOCKNAME: usize = 204;
+    pub const GETPEERNAME: usize = 205;
+    pub const SENDTO: usize = 206;
+    pub const RECVFROM: usize = 207;
+    pub const SETSOCKOPT: usize = 208;
+    pub const SHUTDOWN: usize = 210;
 }
 
 pub const AT_FDCWD: isize = -100;
