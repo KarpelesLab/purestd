@@ -614,16 +614,31 @@ mod opt {
     pub const O_NONBLOCK: i32 = 0x800;
 }
 
-fn encode_timeval(dur: Option<core::time::Duration>) -> [u8; 16] {
+/// Encode a `struct timeval` for `SO_RCVTIMEO`/`SO_SNDTIMEO`, returning the
+/// bytes and the kernel-expected length. 32-bit Linux uses an 8-byte
+/// `{i32 sec, i32 usec}`; 64-bit Linux a 16-byte `{i64, i64}`; macOS a 16-byte
+/// `{i64 sec, i32 usec}` (the high word stays zero).
+fn encode_timeval(dur: Option<core::time::Duration>) -> ([u8; 16], u32) {
     let mut tv = [0u8; 16];
-    if let Some(d) = dur {
-        tv[0..8].copy_from_slice(&(d.as_secs() as i64).to_ne_bytes());
-        #[cfg(target_os = "macos")]
-        tv[8..12].copy_from_slice(&(d.subsec_micros() as i32).to_ne_bytes());
-        #[cfg(not(target_os = "macos"))]
-        tv[8..16].copy_from_slice(&(d.subsec_micros() as i64).to_ne_bytes());
+    #[cfg(all(target_os = "linux", target_pointer_width = "32"))]
+    {
+        if let Some(d) = dur {
+            tv[0..4].copy_from_slice(&(d.as_secs() as i32).to_ne_bytes());
+            tv[4..8].copy_from_slice(&(d.subsec_micros() as i32).to_ne_bytes());
+        }
+        (tv, 8)
     }
-    tv
+    #[cfg(not(all(target_os = "linux", target_pointer_width = "32")))]
+    {
+        if let Some(d) = dur {
+            tv[0..8].copy_from_slice(&(d.as_secs() as i64).to_ne_bytes());
+            #[cfg(target_os = "macos")]
+            tv[8..12].copy_from_slice(&(d.subsec_micros() as i32).to_ne_bytes());
+            #[cfg(not(target_os = "macos"))]
+            tv[8..16].copy_from_slice(&(d.subsec_micros() as i64).to_ne_bytes());
+        }
+        (tv, 16)
+    }
 }
 
 fn set_nonblocking_fd(fd: i32, nonblocking: bool) -> io::Result<()> {
@@ -648,13 +663,13 @@ impl TcpStream {
             .map_err(Error::from)
     }
     pub fn set_read_timeout(&self, dur: Option<core::time::Duration>) -> io::Result<()> {
-        let tv = encode_timeval(dur);
-        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_RCVTIMEO, tv.as_ptr(), 16)
+        let (tv, tvlen) = encode_timeval(dur);
+        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_RCVTIMEO, tv.as_ptr(), tvlen)
             .map_err(Error::from)
     }
     pub fn set_write_timeout(&self, dur: Option<core::time::Duration>) -> io::Result<()> {
-        let tv = encode_timeval(dur);
-        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_SNDTIMEO, tv.as_ptr(), 16)
+        let (tv, tvlen) = encode_timeval(dur);
+        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_SNDTIMEO, tv.as_ptr(), tvlen)
             .map_err(Error::from)
     }
     pub fn set_nonblocking(&self, nonblocking: bool) -> io::Result<()> {
@@ -685,8 +700,8 @@ impl UdpSocket {
         set_nonblocking_fd(self.0 .0, nonblocking)
     }
     pub fn set_read_timeout(&self, dur: Option<core::time::Duration>) -> io::Result<()> {
-        let tv = encode_timeval(dur);
-        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_RCVTIMEO, tv.as_ptr(), 16)
+        let (tv, tvlen) = encode_timeval(dur);
+        syscall::setsockopt(self.0 .0, c::SOL_SOCKET, opt::SO_RCVTIMEO, tv.as_ptr(), tvlen)
             .map_err(Error::from)
     }
     pub fn try_clone(&self) -> io::Result<UdpSocket> {
