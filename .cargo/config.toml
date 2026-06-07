@@ -10,6 +10,9 @@
 [target.aarch64-apple-darwin]
 rustflags = ["-Cdefault-linker-libraries=yes"]
 
+[target.x86_64-apple-darwin]
+rustflags = ["-Cdefault-linker-libraries=yes"]
+
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-Cdefault-linker-libraries=yes"]
 

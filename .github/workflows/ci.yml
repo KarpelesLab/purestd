@@ -114,3 +114,24 @@ jobs:
           check "misc_test: OK"           "$B/misc_test"
           check "tlstest: OK"             "$B/tlstest"
           check "scopetest: OK"           "$B/scopetest"
+
+  # macOS x86_64 has no GitHub runner (Intel macOS is retired) and can't be
+  # emulated like the Linux cross targets, so it is BUILD-ONLY: we cross-build
+  # the lib + examples from the arm64 runner. Runtime behavior (carry-flag error
+  # capture, fork/pipe, stat layout) must be confirmed on real Intel hardware;
+  # thread spawning is intentionally Unsupported on this backend for now.
+  build-macos-x86_64:
+    runs-on: macos-14
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Toolchain
+        run: |
+          rustup default stable
+          rustup target add x86_64-apple-darwin
+          rustc -V
+      - name: Build (lib default + no-default-features, and examples)
+        run: |
+          cargo build --target x86_64-apple-darwin
+          cargo build --target x86_64-apple-darwin --no-default-features
+          cargo build --target x86_64-apple-darwin --examples

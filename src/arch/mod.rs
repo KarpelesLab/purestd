@@ -10,6 +10,10 @@
 #[path = "macos_aarch64.rs"]
 mod imp;
 
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+#[path = "macos_x86_64.rs"]
+mod imp;
+
 #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
 #[path = "linux_aarch64.rs"]
 mod imp;

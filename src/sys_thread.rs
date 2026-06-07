@@ -222,6 +222,104 @@ mod imp {
 }
 
 // ===========================================================================
+// macOS / x86_64 (build-only)
+//
+// The Mach `thread_create_running` path above is arm64-specific (it hand-builds
+// an `ARM_THREAD_STATE64` message), and there is no macOS-x86_64 CI runner to
+// validate a port. So this backend ships with thread *spawning* unsupported,
+// while the futex primitives — which `sync` (Mutex/Condvar/RwLock) depends on —
+// work via the regular `__ulock` BSD syscalls through the x86_64 `syscall`
+// instruction. A real-hardware port of the Mach trampoline can replace
+// `spawn_os` later.
+// ===========================================================================
+#[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+mod imp {
+    use super::*;
+    use crate::arch;
+
+    const SYS_ULOCK_WAIT: usize = 0x2000000 | 515;
+    const SYS_ULOCK_WAKE: usize = 0x2000000 | 516;
+    const UL_OP: usize = 1; // UL_COMPARE_AND_WAIT
+    const ULF_WAKE_ALL: usize = 0x100;
+
+    pub unsafe fn spawn_os(
+        _entry: ThreadEntry,
+        _arg: *mut u8,
+        _stack_top: usize,
+    ) -> Result<(), ()> {
+        Err(()) // threads not yet wired on macOS x86_64
+    }
+
+    pub unsafe fn thread_exit(_stack_base: usize, _stack_size: usize) -> ! {
+        // Unreachable (we never spawn), but must exist and diverge.
+        arch::syscall1(arch::nr::EXIT, 0);
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+
+    pub fn futex_wait(addr: &AtomicU32, expected: u32) {
+        while addr.load(Ordering::Acquire) == expected {
+            unsafe {
+                arch::syscall4(
+                    SYS_ULOCK_WAIT,
+                    UL_OP,
+                    addr as *const _ as usize,
+                    expected as usize,
+                    0,
+                );
+            }
+        }
+    }
+
+    pub fn futex_wait_timeout(addr: &AtomicU32, expected: u32, dur: Duration) {
+        if addr.load(Ordering::Acquire) != expected {
+            return;
+        }
+        let us = core::cmp::min(dur.as_micros(), u32::MAX as u128) as usize;
+        unsafe {
+            arch::syscall4(
+                SYS_ULOCK_WAIT,
+                UL_OP,
+                addr as *const _ as usize,
+                expected as usize,
+                us,
+            );
+        }
+    }
+
+    pub fn futex_wake(addr: &AtomicU32) {
+        unsafe {
+            arch::syscall3(SYS_ULOCK_WAKE, UL_OP, addr as *const _ as usize, 0);
+        }
+    }
+
+    pub fn futex_wake_all(addr: &AtomicU32) {
+        unsafe {
+            arch::syscall3(SYS_ULOCK_WAKE, UL_OP | ULF_WAKE_ALL, addr as *const _ as usize, 0);
+        }
+    }
+
+    pub fn sleep(dur: Duration) {
+        // ulock_wait with a timeout on a never-changing word acts as a sleep.
+        let mut us = dur.as_micros();
+        let dummy = AtomicU32::new(0);
+        while us > 0 {
+            let chunk = core::cmp::min(us, u32::MAX as u128) as usize;
+            unsafe {
+                arch::syscall4(SYS_ULOCK_WAIT, UL_OP, &dummy as *const _ as usize, 0, chunk);
+            }
+            us -= chunk as u128;
+        }
+    }
+
+    pub fn yield_now() {
+        // thread_switch is a Mach trap (used by the arm64 path); left as a no-op
+        // on this build-only x86_64 backend.
+    }
+}
+
+// ===========================================================================
 // Linux (x86_64 / aarch64)
 // ===========================================================================
 #[cfg(target_os = "linux")]

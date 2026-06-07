@@ -381,6 +381,16 @@ pub fn monotonic() -> (u64, u32) {
         let nanos = (rem as u128 * 1_000_000_000 / freq as u128) as u32;
         (secs, nanos)
     }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        // macOS x86_64 is a build-only target (no CI runner). There is no stable
+        // architectural-counter read wired here, so fall back to wall-clock
+        // `gettimeofday` — good enough for `Instant` to advance, though not
+        // strictly monotonic. Revisit with `mach_absolute_time` on real hardware.
+        let mut tv = [0i64; 2]; // struct timeval { i64 tv_sec; i64 tv_usec; }
+        let _ = unsafe { arch::syscall2(nr::GETTIMEOFDAY, tv.as_mut_ptr() as usize, 0) };
+        (tv[0] as u64, (tv[1] as u32).wrapping_mul(1000))
+    }
 }
 
 /// Fill `buf` with cryptographically-secure random bytes from the kernel.
@@ -642,7 +652,7 @@ pub fn shutdown(fd: i32, how: i32) -> Result<(), Errno> {
 /// quirk), so we read it directly.
 #[inline]
 pub fn fork() -> Result<i32, Errno> {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         let (x0, x1, err): (usize, usize, usize);
         unsafe {
@@ -665,6 +675,31 @@ pub fn fork() -> Result<i32, Errno> {
             Ok(0)
         } else {
             Ok(x0 as i32)
+        }
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        // Darwin x86_64 reports child-vs-parent in `rdx` (== 1 in the child).
+        let (rax, rdx, err): (usize, usize, u8);
+        unsafe {
+            core::arch::asm!(
+                "syscall",
+                "setc {e}",
+                inlateout("rax") (0x2000000usize | 2) => rax,
+                out("rdx") rdx,
+                e = out(reg_byte) err,
+                lateout("rcx") _,
+                lateout("r11") _,
+                options(nostack),
+            );
+        }
+        if err != 0 {
+            return Err(Errno(rax as i32));
+        }
+        if rdx == 1 {
+            Ok(0)
+        } else {
+            Ok(rax as i32)
         }
     }
     #[cfg(all(
@@ -710,7 +745,7 @@ pub fn wait4(pid: i32, status: &mut i32, options: i32) -> Result<i32, Errno> {
 /// `pipe()` -> (read_fd, write_fd).
 #[inline]
 pub fn pipe() -> Result<(i32, i32), Errno> {
-    #[cfg(target_os = "macos")]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         // Darwin returns the two fds in x0/x1.
         let (r, w, err): (usize, usize, usize);
@@ -723,6 +758,27 @@ pub fn pipe() -> Result<(i32, i32), Errno> {
                 out("x0") r,
                 out("x1") w,
                 e = out(reg) err,
+                options(nostack),
+            );
+        }
+        if err != 0 {
+            return Err(Errno(r as i32));
+        }
+        Ok((r as i32, w as i32))
+    }
+    #[cfg(all(target_os = "macos", target_arch = "x86_64"))]
+    {
+        // Darwin x86_64 returns the two fds in rax/rdx.
+        let (r, w, err): (usize, usize, u8);
+        unsafe {
+            core::arch::asm!(
+                "syscall",
+                "setc {e}",
+                inlateout("rax") (0x2000000usize | 42) => r,
+                out("rdx") w,
+                e = out(reg_byte) err,
+                lateout("rcx") _,
+                lateout("r11") _,
                 options(nostack),
             );
         }
