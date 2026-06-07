@@ -217,6 +217,12 @@ fn st_mode(b: &syscall::StatBuf) -> u32 {
 fn st_mode(b: &syscall::StatBuf) -> u32 {
     u32::from_ne_bytes([b[16], b[17], b[18], b[19]])
 }
+// wasm has no stat — `Metadata` is never constructed (statat returns
+// Unsupported), so these stubs are never actually reached.
+#[cfg(target_family = "wasm")]
+fn st_mode(_b: &syscall::StatBuf) -> u32 {
+    0
+}
 
 // st_size: 64-bit on every target. On 32-bit Linux this is `struct stat64`,
 // whose `long long` alignment differs — i386 packs it at 44 (4-byte aligned),
@@ -227,6 +233,8 @@ const ST_SIZE_OFF: usize = 96;
 const ST_SIZE_OFF: usize = 44;
 #[cfg(all(target_os = "linux", not(target_arch = "x86")))]
 const ST_SIZE_OFF: usize = 48;
+#[cfg(target_family = "wasm")]
+const ST_SIZE_OFF: usize = 0;
 
 // st_mtime tv_sec. 64-bit (`read_i64`) on 64-bit targets; a 32-bit field in the
 // 32-bit `struct stat64`, with i386 and ARM at different offsets.
@@ -238,6 +246,8 @@ const ST_MTIME_OFF: usize = 72;
 const ST_MTIME_OFF: usize = 80;
 #[cfg(all(target_os = "linux", not(any(target_arch = "x86", target_arch = "arm"))))]
 const ST_MTIME_OFF: usize = 88;
+#[cfg(target_family = "wasm")]
+const ST_MTIME_OFF: usize = 0;
 
 fn read_i64(b: &[u8], off: usize) -> i64 {
     let mut a = [0u8; 8];
@@ -537,6 +547,8 @@ const ST_UID_OFF: usize = 28;
     )
 ))]
 const ST_UID_OFF: usize = 24;
+#[cfg(target_family = "wasm")]
+const ST_UID_OFF: usize = 0;
 
 impl Metadata {
     #[doc(hidden)]

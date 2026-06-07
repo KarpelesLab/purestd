@@ -56,6 +56,7 @@ macro_rules! entry {
     ($main:path) => {
         // `export_name` (not a `fn main` item) so this doesn't collide with the
         // user's `fn main`, while still emitting the C `main` symbol crt0 wants.
+        #[cfg(not(target_family = "wasm"))]
         #[export_name = "main"]
         pub extern "C" fn __purestd_main(
             argc: ::core::ffi::c_int,
@@ -63,6 +64,17 @@ macro_rules! entry {
             envp: *const *const u8,
         ) -> ::core::ffi::c_int {
             unsafe { $crate::rt::__entry(argc as usize, argv, envp, $main) as ::core::ffi::c_int }
+        }
+
+        // On WASI the command crt's `_start` fetches the args and calls
+        // `__main_argc_argv`; the environment is read separately via WASI.
+        #[cfg(target_family = "wasm")]
+        #[export_name = "__main_argc_argv"]
+        pub extern "C" fn __purestd_main_wasm(
+            argc: ::core::ffi::c_int,
+            argv: *const *const u8,
+        ) -> ::core::ffi::c_int {
+            unsafe { $crate::rt::__entry_wasm(argc as usize, argv, $main) as ::core::ffi::c_int }
         }
     };
 }

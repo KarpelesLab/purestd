@@ -24,6 +24,32 @@ pub(crate) unsafe fn init(argc: usize, argv: *const *const u8, envp: *const *con
     ENVP.store(envp as *mut *const u8, Ordering::Relaxed);
 }
 
+/// WASI startup: `argv` is supplied by the command crt; the environment is
+/// fetched via WASI `environ_get` into leaked buffers (process-lifetime).
+#[cfg(target_family = "wasm")]
+pub(crate) unsafe fn init_wasm(argc: usize, argv: *const *const u8) {
+    use crate::alloc::vec::Vec;
+    use crate::arch::wasi;
+
+    ARGC.store(argc, Ordering::Relaxed);
+    ARGV.store(argv as *mut *const u8, Ordering::Relaxed);
+
+    let mut count: usize = 0;
+    let mut buf_size: usize = 0;
+    if wasi::environ_sizes_get(&mut count, &mut buf_size) == 0 && count > 0 {
+        let mut ptrs: Vec<*mut u8> = Vec::with_capacity(count + 1);
+        ptrs.resize(count + 1, ptr::null_mut());
+        let mut buf: Vec<u8> = Vec::with_capacity(buf_size.max(1));
+        buf.resize(buf_size.max(1), 0);
+        if wasi::environ_get(ptrs.as_mut_ptr(), buf.as_mut_ptr()) == 0 {
+            ptrs[count] = ptr::null_mut(); // NULL-terminate the char** array
+            let leaked = ptrs.leak();
+            core::mem::forget(buf); // the strings the pointers reference
+            ENVP.store(leaked.as_mut_ptr() as *mut *const u8, Ordering::Relaxed);
+        }
+    }
+}
+
 #[inline]
 unsafe fn cstr_to_string(p: *const u8) -> String {
     let bytes = CStr::from_ptr(p as *const c_char).to_bytes();

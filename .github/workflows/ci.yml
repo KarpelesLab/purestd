@@ -135,3 +135,37 @@ jobs:
           cargo build --target x86_64-apple-darwin
           cargo build --target x86_64-apple-darwin --no-default-features
           cargo build --target x86_64-apple-darwin --examples
+
+  # wasm32-WASI: WebAssembly has no syscalls, so this backend is reduced — stdio,
+  # args/env, clocks, random, and the heap (linear-memory growth) work; threads,
+  # processes, sockets and the filesystem report Unsupported. All examples build;
+  # we run the supported subset under wasmtime.
+  wasm:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install wasmtime
+        run: |
+          curl https://wasmtime.dev/install.sh -sSf | bash
+          echo "$HOME/.wasmtime/bin" >> "$GITHUB_PATH"
+      - name: Toolchain
+        run: |
+          rustup default stable
+          rustup target add wasm32-wasip1
+          rustc -V
+      - name: Build (lib default + no-default-features, and all examples)
+        run: |
+          cargo build --target wasm32-wasip1
+          cargo build --target wasm32-wasip1 --no-default-features
+          cargo build --target wasm32-wasip1 --examples
+      - name: Run & validate (wasmtime, supported subset)
+        shell: bash
+        run: |
+          set -eo pipefail
+          B=target/wasm32-wasip1/debug/examples
+          check() { local pat="$1"; shift; local out; out="$(wasmtime run "$@")"; echo "$out"; grep -q "$pat" <<<"$out"; }
+          check "hello from purestd"      "$B/hello.wasm"
+          check "\[3\] c"                 "$B/args.wasm" a b c
+          check "checks passed"           "$B/mapstress.wasm"
+          check "reference vectors match" "$B/sipcheck.wasm"

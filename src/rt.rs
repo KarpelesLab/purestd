@@ -21,6 +21,19 @@ pub unsafe fn __entry<T: Termination>(
     main().report()
 }
 
+/// WASI entry shim: the command crt passes `argc`/`argv` (it fetched them via
+/// `args_get`); the environment is read separately. Analogue of [`__entry`].
+#[doc(hidden)]
+#[cfg(target_family = "wasm")]
+pub unsafe fn __entry_wasm<T: Termination>(
+    argc: usize,
+    argv: *const *const u8,
+    main: fn() -> T,
+) -> i32 {
+    crate::env::init_wasm(argc, argv);
+    main().report()
+}
+
 /// Exit the process with `code`. Never returns.
 #[inline]
 pub fn exit(code: i32) -> ! {

@@ -34,4 +34,10 @@ mod imp;
 #[path = "arm_linux.rs"]
 mod imp;
 
+#[cfg(not(target_family = "wasm"))]
 pub use imp::*;
+
+// wasm has no syscall instruction; the WASI backend is exposed as a module and
+// driven by `syscall_wasi.rs` (there is no `syscall0..6` surface here).
+#[cfg(target_family = "wasm")]
+pub mod wasi;

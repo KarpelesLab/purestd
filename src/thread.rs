@@ -115,6 +115,20 @@ impl Builder {
         self
     }
 
+    #[cfg(target_family = "wasm")]
+    pub fn spawn<F, T>(self, _f: F) -> io::Result<JoinHandle<T>>
+    where
+        F: FnOnce() -> T + Send + 'static,
+        T: Send + 'static,
+    {
+        // wasm (WASI preview1) is single-threaded — no thread spawning.
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "threads are not supported on wasm",
+        ))
+    }
+
+    #[cfg(not(target_family = "wasm"))]
     pub fn spawn<F, T>(self, f: F) -> io::Result<JoinHandle<T>>
     where
         F: FnOnce() -> T + Send + 'static,

@@ -570,6 +570,34 @@ mod imp {
     }
 }
 
+// ===========================================================================
+// wasm (WASI preview1) — single-threaded
+//
+// There are no threads, so spawning is unsupported and the futex primitives are
+// no-ops: locks are only ever taken uncontended, so `sync`'s CAS fast paths
+// never reach a wait. `sleep`/`yield_now` are no-ops for this MVP.
+// ===========================================================================
+#[cfg(target_family = "wasm")]
+mod imp {
+    use super::*;
+
+    pub unsafe fn spawn_os(_e: ThreadEntry, _arg: *mut u8, _stack_top: usize) -> Result<(), ()> {
+        Err(())
+    }
+    pub unsafe fn thread_exit(_stack_base: usize, _stack_size: usize) -> ! {
+        // Unreachable (we never spawn).
+        loop {
+            core::hint::spin_loop();
+        }
+    }
+    pub fn futex_wait(_addr: &AtomicU32, _expected: u32) {}
+    pub fn futex_wait_timeout(_addr: &AtomicU32, _expected: u32, _dur: Duration) {}
+    pub fn futex_wake(_addr: &AtomicU32) {}
+    pub fn futex_wake_all(_addr: &AtomicU32) {}
+    pub fn sleep(_dur: Duration) {}
+    pub fn yield_now() {}
+}
+
 pub use imp::{
     futex_wait, futex_wait_timeout, futex_wake, futex_wake_all, sleep, spawn_os, thread_exit,
     yield_now,

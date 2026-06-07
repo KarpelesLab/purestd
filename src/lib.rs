@@ -59,6 +59,10 @@ pub mod arch;
 pub mod macros;
 pub mod prelude;
 pub mod rt;
+#[cfg(not(target_family = "wasm"))]
+pub mod syscall;
+#[cfg(target_family = "wasm")]
+#[path = "syscall_wasi.rs"]
 pub mod syscall;
 
 // ---- the std-shaped surface ----

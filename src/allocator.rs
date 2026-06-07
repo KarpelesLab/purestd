@@ -11,6 +11,7 @@
 //! is registered only under the `rt` feature, so a host runtime can supply its
 //! own.
 
+#[cfg(not(target_family = "wasm"))]
 use crate::arch::{PROT_READ, PROT_WRITE};
 use crate::syscall;
 use core::alloc::{GlobalAlloc, Layout};
@@ -35,11 +36,27 @@ fn round_up(v: usize, to: usize) -> usize {
     (v + to - 1) & !(to - 1)
 }
 
+#[cfg(not(target_family = "wasm"))]
 #[inline]
 fn map(len: usize) -> *mut u8 {
     match syscall::mmap_anon(len, PROT_READ | PROT_WRITE) {
         Ok(p) => p,
         Err(_) => ptr::null_mut(),
+    }
+}
+
+/// wasm has no `mmap`; grow the single linear memory and hand back the new
+/// region. Freed large blocks are never returned (linear memory can't shrink).
+#[cfg(target_family = "wasm")]
+#[inline]
+fn map(len: usize) -> *mut u8 {
+    const PAGE: usize = 65536;
+    let pages = (len + PAGE - 1) / PAGE;
+    let prev = core::arch::wasm32::memory_grow(0, pages);
+    if prev == usize::MAX {
+        ptr::null_mut()
+    } else {
+        (prev * PAGE) as *mut u8
     }
 }
 
