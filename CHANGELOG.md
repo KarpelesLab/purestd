@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.4](https://github.com/KarpelesLab/purestd/compare/v0.0.3...v0.0.4) - 2026-06-07
+
+### Other
+
+- README — document all eight targets
+- explicitly link libc (-lc) to define the crt support symbols
+- link wasi-libc (default-linker-libraries) to resolve __wasi_init_tp
+- add wasm32 (WASI preview1) backend, reduced surface
+- add macOS x86_64 backend (build-only)
+- 32-bit timeval for SO_RCVTIMEO/SO_SNDTIMEO
+- add i686 + arm (32-bit) Linux backends
+- use renameat2 (no legacy renameat on this arch)
+- add riscv64-linux backend + qemu-user CI harness
+
 ## [0.0.3](https://github.com/KarpelesLab/purestd/compare/v0.0.2...v0.0.3) - 2026-06-06
 
 ### Added
