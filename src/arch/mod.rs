@@ -18,4 +18,8 @@ mod imp;
 #[path = "linux_x86_64.rs"]
 mod imp;
 
+#[cfg(all(target_os = "linux", target_arch = "riscv64"))]
+#[path = "linux_riscv64.rs"]
+mod imp;
+
 pub use imp::*;

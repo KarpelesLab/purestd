@@ -52,3 +52,49 @@ jobs:
           check "misc_test: OK"           "$B/misc_test"
           check "tlstest: OK"             "$B/tlstest"
           check "scopetest: OK"           "$B/scopetest"
+
+  # Cross targets that have no native GitHub runner: cross-build with the gcc
+  # cross toolchain and *run* the same example corpus under qemu-user, so the
+  # per-arch syscall numbers, struct offsets, clone trampoline and futex are all
+  # genuinely exercised — not merely type-checked.
+  cross-riscv64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - name: Cross toolchain + qemu
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-riscv64-linux-gnu qemu-user qemu-user-static
+      - name: Toolchain
+        run: |
+          rustup default stable
+          rustup target add riscv64gc-unknown-linux-gnu
+          rustc -V
+      - name: Build (lib, default + no-default-features)
+        run: |
+          cargo build --target riscv64gc-unknown-linux-gnu
+          cargo build --target riscv64gc-unknown-linux-gnu --no-default-features
+      - name: Build examples
+        run: cargo build --target riscv64gc-unknown-linux-gnu --examples
+      - name: Run & validate (qemu-riscv64)
+        shell: bash
+        run: |
+          set -eo pipefail
+          B=target/riscv64gc-unknown-linux-gnu/debug/examples
+          Q="qemu-riscv64 -L /usr/riscv64-linux-gnu"
+          check() { local pat="$1"; shift; local out; out="$($Q "$@")"; echo "$out"; grep -q "$pat" <<<"$out"; }
+          check "hello from purestd"      "$B/hello"
+          check "\[3\] c"                 "$B/args" a b c
+          check "^ok$"                    "$B/stdshow"
+          check "checks passed"           "$B/mapstress"
+          check "reference vectors match" "$B/sipcheck"
+          check "counter = 80000"         "$B/threads"
+          check "net: OK"                 "$B/net"
+          check "io_test: OK"             "$B/io_test"
+          check "synctest: OK"            "$B/synctest"
+          check "fstest: OK"              "$B/fstest"
+          check "proctest: OK"            "$B/proctest"
+          check "misc_test: OK"           "$B/misc_test"
+          check "tlstest: OK"             "$B/tlstest"
+          check "scopetest: OK"           "$B/scopetest"

@@ -203,7 +203,7 @@ fn st_mode(b: &syscall::StatBuf) -> u32 {
 fn st_mode(b: &syscall::StatBuf) -> u32 {
     u32::from_ne_bytes([b[24], b[25], b[26], b[27]])
 }
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "riscv64")))]
 fn st_mode(b: &syscall::StatBuf) -> u32 {
     u32::from_ne_bytes([b[16], b[17], b[18], b[19]])
 }
@@ -492,7 +492,7 @@ impl Iterator for ReadDir {
 const ST_UID_OFF: usize = 16;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const ST_UID_OFF: usize = 28;
-#[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "riscv64")))]
 const ST_UID_OFF: usize = 24;
 
 impl Metadata {

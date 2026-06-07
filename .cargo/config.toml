@@ -15,3 +15,10 @@ rustflags = ["-Cdefault-linker-libraries=yes"]
 
 [target.aarch64-unknown-linux-gnu]
 rustflags = ["-Cdefault-linker-libraries=yes"]
+
+# Cross targets exercised in CI under qemu-user. The cross gcc supplies crt0 and
+# the target sysroot; `-Cdefault-linker-libraries` links libc the same way the
+# native dev builds do (purestd still calls zero libc itself).
+[target.riscv64gc-unknown-linux-gnu]
+linker = "riscv64-linux-gnu-gcc"
+rustflags = ["-Cdefault-linker-libraries=yes"]

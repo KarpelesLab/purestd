@@ -290,6 +290,32 @@ mod imp {
         "  svc #0",
     );
 
+    #[cfg(target_arch = "riscv64")]
+    core::arch::global_asm!(
+        ".text",
+        ".globl __purestd_clone",
+        "__purestd_clone:",          // a0=entry, a1=stack_top, a2=flags, a3=arg
+        "  andi a1, a1, -16",        // align child stack
+        "  addi a1, a1, -16",        // reserve a slot for entry+arg
+        "  sd   a0, 0(a1)",          // save entry on child stack
+        "  sd   a3, 8(a1)",          // save arg
+        "  mv   a0, a2",             // clone arg0 = flags (new_sp already in a1)
+        "  li   a2, 0",              // parent_tid
+        "  li   a3, 0",              // tls
+        "  li   a4, 0",              // child_tid
+        "  li   a7, 220",            // SYS_clone
+        "  ecall",
+        "  bnez a0, 1f",             // parent: a0 = child tid
+        "  ld   a1, 0(sp)",          // child: a1 = entry
+        "  ld   a0, 8(sp)",          // a0 = arg
+        "  jalr a1",                 // entry(arg); never returns
+        "  li   a7, 93",             // SYS_exit (fallback)
+        "  li   a0, 0",
+        "  ecall",
+        "1:",
+        "  ret",
+    );
+
     // Thread creation flags (shared VM, fds, signals, same thread group).
     const CLONE_VM: usize = 0x00000100;
     const CLONE_FS: usize = 0x00000200;

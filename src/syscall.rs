@@ -552,9 +552,10 @@ pub fn fork() -> Result<i32, Errno> {
     {
         from_ret(unsafe { arch::syscall0(nr::FORK) }).map(|p| p as i32)
     }
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "riscv64")))]
     {
-        // aarch64 Linux has no `fork`; clone with SIGCHLD and no new stack.
+        // The asm-generic ABI (aarch64/riscv64) has no `fork`; clone with
+        // SIGCHLD and no new stack.
         const SIGCHLD: usize = 17;
         from_ret(unsafe { arch::syscall5(nr::CLONE, SIGCHLD, 0, 0, 0, 0) }).map(|p| p as i32)
     }
@@ -619,11 +620,11 @@ pub fn pipe() -> Result<(i32, i32), Errno> {
 /// `dup2(old, new)` — make `new` refer to `old`.
 #[inline]
 pub fn dup2(old: i32, new: i32) -> Result<(), Errno> {
-    #[cfg(all(target_os = "linux", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "riscv64")))]
     {
         from_ret(unsafe { arch::syscall3(nr::DUP3, old as usize, new as usize, 0) }).map(|_| ())
     }
-    #[cfg(not(all(target_os = "linux", target_arch = "aarch64")))]
+    #[cfg(not(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "riscv64"))))]
     {
         from_ret(unsafe { arch::syscall2(nr::DUP2, old as usize, new as usize) }).map(|_| ())
     }
