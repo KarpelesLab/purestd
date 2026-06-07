@@ -105,7 +105,10 @@ pub mod nr {
     pub const SHUTDOWN: usize = 210;
     pub const FTRUNCATE: usize = 46;
     pub const FSYNC: usize = 82;
+    // riscv64 is a newer arch: the kernel does not provide the legacy
+    // `renameat` (38, gated on __ARCH_WANT_RENAMEAT) — only `renameat2`.
     pub const RENAMEAT: usize = 38;
+    pub const RENAMEAT2: usize = 276;
     pub const FSTAT: usize = 80;
     pub const NEWFSTATAT: usize = 79;
     pub const GETDENTS64: usize = 61;

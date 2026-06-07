@@ -246,16 +246,34 @@ pub fn fstat(fd: i32) -> Result<StatBuf, Errno> {
 /// `renameat(AT_FDCWD, old, AT_FDCWD, new)`.
 #[inline]
 pub fn rename(old: &core::ffi::CStr, new: &core::ffi::CStr) -> Result<(), Errno> {
-    from_ret(unsafe {
-        arch::syscall4(
-            nr::RENAMEAT,
-            arch::AT_FDCWD as usize,
-            old.as_ptr() as usize,
-            arch::AT_FDCWD as usize,
-            new.as_ptr() as usize,
-        )
-    })
-    .map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "riscv64"))]
+    {
+        // riscv64 has no legacy `renameat`; use `renameat2` with flags = 0.
+        from_ret(unsafe {
+            arch::syscall5(
+                nr::RENAMEAT2,
+                arch::AT_FDCWD as usize,
+                old.as_ptr() as usize,
+                arch::AT_FDCWD as usize,
+                new.as_ptr() as usize,
+                0,
+            )
+        })
+        .map(|_| ())
+    }
+    #[cfg(not(all(target_os = "linux", target_arch = "riscv64")))]
+    {
+        from_ret(unsafe {
+            arch::syscall4(
+                nr::RENAMEAT,
+                arch::AT_FDCWD as usize,
+                old.as_ptr() as usize,
+                arch::AT_FDCWD as usize,
+                new.as_ptr() as usize,
+            )
+        })
+        .map(|_| ())
+    }
 }
 
 /// `unlinkat(AT_FDCWD, path, AT_REMOVEDIR)` — remove an empty directory.
