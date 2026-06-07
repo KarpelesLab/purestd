@@ -2,10 +2,10 @@
 
 A **`std` written in pure Rust that never calls libc.** Every operation —
 files, time, env, threads, the allocator — is a direct kernel syscall
-(`svc`/`syscall`). Built on `core` + `alloc`, purestd provides exactly what a
-real `std` provides (the panic handler, the global allocator, I/O, the
-`std`-shaped API) and keeps Rust's guarantees intact all the way down to the
-syscall instruction.
+(`svc`/`syscall`/`ecall`/`int 0x80`, or WASI imports on wasm). Built on
+`core` + `alloc`, purestd provides exactly what a real `std` provides (the panic
+handler, the global allocator, I/O, the `std`-shaped API) and keeps Rust's
+guarantees intact all the way down to the syscall instruction.
 
 purestd is *only* `std`. The process entry point (`_start`) and the
 `mem*`/unwind symbols are not its concern — in a normal build they come from
@@ -48,15 +48,28 @@ for [`env`](src/env.rs) before your `main` runs.
 
 ## Targets
 
-| Target                      | Tested in CI            |
-| --------------------------- | ----------------------- |
-| `aarch64-apple-darwin`      | build + run             |
-| `x86_64-unknown-linux-gnu`  | build + run             |
-| `aarch64-unknown-linux-gnu` | build + run             |
+| Target                          | Tested in CI                 |
+| ------------------------------- | ---------------------------- |
+| `aarch64-apple-darwin`          | build + run (native)         |
+| `x86_64-apple-darwin`           | build only¹                  |
+| `x86_64-unknown-linux-gnu`      | build + run (native)         |
+| `aarch64-unknown-linux-gnu`     | build + run (native)         |
+| `riscv64gc-unknown-linux-gnu`   | build + run (qemu-user)      |
+| `i686-unknown-linux-gnu`        | build + run (qemu-user)      |
+| `arm-unknown-linux-gnueabihf`   | build + run (qemu-user)      |
+| `wasm32-wasip1`                 | build + run subset (wasmtime)² |
+
+¹ No GitHub Intel-macOS runner exists and macOS can't be emulated, so this
+target is cross-built only; threads are `Unsupported` on it for now.
+² WebAssembly has no syscalls, so the WASI backend is a **reduced surface**:
+stdio, args/env, clocks, random and the heap (linear-memory growth) work;
+threads, processes, sockets and the filesystem report `Unsupported`.
 
 The only architecture/OS-specific code lives in [`src/arch/`](src/arch/): one
-file per target with the raw `syscallN` wrappers and the syscall number table.
-Everything above it is OS-neutral.
+file per target with the raw `syscallN` wrappers and the syscall number table
+(or, for wasm, the WASI imports). Everything above it is OS-neutral. Each Linux
+arch differs only in four spots — the syscall instruction, the number table, the
+`struct stat` offsets, and the thread-clone trampoline.
 
 ## Layout
 
@@ -100,16 +113,19 @@ verified against the canonical reference vectors — `cargo run --example sipche
 `collections` (own open-addressing `HashMap`/`HashSet` + the `alloc` containers).
 
 Threads are real OS threads: `thread::spawn`/`JoinHandle::join`/`Builder`,
-`sleep`, `yield_now`, futex-based join. On macOS they use Mach
-`thread_create_running` (no libpthread — see [`docs/macos-threads.md`](docs/macos-threads.md));
-on Linux they use `clone` + `futex`. Exercised on every target in CI.
+`sleep`, `yield_now`, `park`/`unpark`, futex-based join. On macOS/arm64 they use
+Mach `thread_create_running` (no libpthread — see
+[`docs/macos-threads.md`](docs/macos-threads.md)); on Linux (x86_64/aarch64/
+riscv64/i686/arm) they use `clone` + `futex`, exercised under qemu in CI.
+(macOS x86_64 and wasm have no thread spawning yet.)
 
 `net`: `TcpStream`, `TcpListener`, `UdpSocket`, and `ToSocketAddrs` over raw
 socket syscalls, with name resolution from `/etc/hosts` plus plain DNS
 (`/etc/resolv.conf`, A/AAAA over UDP) — no NSS.
 
-The parity-critical `std` surface is implemented and exercised in CI on macOS
-arm64 and Linux x86_64/aarch64: `io`/`fs`/`env`/`process` (incl.
+The parity-critical `std` surface is implemented and exercised in CI across
+eight targets (macOS arm64/x86_64, Linux x86_64/aarch64/riscv64/i686/arm, and
+wasm32-WASI — see [Targets](#targets)): `io`/`fs`/`env`/`process` (incl.
 `process::Command`), `time`, `sync` (all locks futex-backed, `Condvar`,
 `mpsc`, …), `thread` (incl. `scope` and `park`/`unpark`), `thread_local!`,
 `net`, `path`, `collections`, and `os::fd`/`os::unix`. What remains is optional
