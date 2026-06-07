@@ -17,7 +17,7 @@ rustflags = ["-Cdefault-linker-libraries=yes"]
 # `__main_argc_argv` / TLS-init (`__wasi_init_tp`) symbols resolve. purestd still
 # does all its own work through WASI imports; it just links the crt.
 [target.wasm32-wasip1]
-rustflags = ["-Cdefault-linker-libraries=yes"]
+rustflags = ["-Cdefault-linker-libraries=yes", "-Clink-arg=-lc"]
 
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-Cdefault-linker-libraries=yes"]
