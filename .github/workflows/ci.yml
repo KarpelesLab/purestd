@@ -57,7 +57,23 @@ jobs:
   # cross toolchain and *run* the same example corpus under qemu-user, so the
   # per-arch syscall numbers, struct offsets, clone trampoline and futex are all
   # genuinely exercised — not merely type-checked.
-  cross-riscv64:
+  cross:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - triple: riscv64gc-unknown-linux-gnu
+            apt: gcc-riscv64-linux-gnu
+            qemu: qemu-riscv64
+            sysroot: /usr/riscv64-linux-gnu
+          - triple: i686-unknown-linux-gnu
+            apt: gcc-i686-linux-gnu
+            qemu: qemu-i386
+            sysroot: /usr/i686-linux-gnu
+          - triple: arm-unknown-linux-gnueabihf
+            apt: gcc-arm-linux-gnueabihf
+            qemu: qemu-arm
+            sysroot: /usr/arm-linux-gnueabihf
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -65,24 +81,24 @@ jobs:
       - name: Cross toolchain + qemu
         run: |
           sudo apt-get update
-          sudo apt-get install -y gcc-riscv64-linux-gnu qemu-user qemu-user-static
+          sudo apt-get install -y ${{ matrix.apt }} qemu-user qemu-user-static
       - name: Toolchain
         run: |
           rustup default stable
-          rustup target add riscv64gc-unknown-linux-gnu
+          rustup target add ${{ matrix.triple }}
           rustc -V
       - name: Build (lib, default + no-default-features)
         run: |
-          cargo build --target riscv64gc-unknown-linux-gnu
-          cargo build --target riscv64gc-unknown-linux-gnu --no-default-features
+          cargo build --target ${{ matrix.triple }}
+          cargo build --target ${{ matrix.triple }} --no-default-features
       - name: Build examples
-        run: cargo build --target riscv64gc-unknown-linux-gnu --examples
-      - name: Run & validate (qemu-riscv64)
+        run: cargo build --target ${{ matrix.triple }} --examples
+      - name: Run & validate (qemu)
         shell: bash
         run: |
           set -eo pipefail
-          B=target/riscv64gc-unknown-linux-gnu/debug/examples
-          Q="qemu-riscv64 -L /usr/riscv64-linux-gnu"
+          B=target/${{ matrix.triple }}/debug/examples
+          Q="${{ matrix.qemu }} -L ${{ matrix.sysroot }}"
           check() { local pat="$1"; shift; local out; out="$($Q "$@")"; echo "$out"; grep -q "$pat" <<<"$out"; }
           check "hello from purestd"      "$B/hello"
           check "\[3\] c"                 "$B/args" a b c

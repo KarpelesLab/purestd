@@ -22,4 +22,12 @@ mod imp;
 #[path = "linux_riscv64.rs"]
 mod imp;
 
+#[cfg(all(target_os = "linux", target_arch = "x86"))]
+#[path = "i686_linux.rs"]
+mod imp;
+
+#[cfg(all(target_os = "linux", target_arch = "arm"))]
+#[path = "arm_linux.rs"]
+mod imp;
+
 pub use imp::*;

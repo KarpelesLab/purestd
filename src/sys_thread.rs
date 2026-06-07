@@ -316,6 +316,71 @@ mod imp {
         "  ret",
     );
 
+    #[cfg(target_arch = "x86")]
+    core::arch::global_asm!(
+        ".text",
+        ".globl __purestd_clone",
+        // cdecl: args on the stack. [esp+4]=entry, [esp+8]=stack_top,
+        // [esp+12]=flags, [esp+16]=arg.
+        "__purestd_clone:",
+        "  push ebx",                // ebx/esi/edi are callee-saved
+        "  push esi",
+        "  push edi",                // (+12 to every stack-arg offset below)
+        "  mov ecx, [esp+20]",       // ecx = stack_top
+        "  and ecx, -16",
+        "  mov eax, [esp+28]",       // arg
+        "  mov [ecx-4], eax",        // save arg near the top of the child stack
+        "  mov eax, [esp+16]",       // entry
+        "  mov [ecx-8], eax",        // save entry
+        "  sub ecx, 8",              // child sp -> [entry, arg]
+        "  mov ebx, [esp+24]",       // ebx = clone flags
+        "  xor edx, edx",            // parent_tid
+        "  xor esi, esi",            // tls
+        "  xor edi, edi",            // child_tid
+        "  mov eax, 120",            // SYS_clone
+        "  int 0x80",
+        "  test eax, eax",
+        "  jz 2f",                   // child?
+        "  pop edi",                 // parent: restore callee-saved, return tid
+        "  pop esi",
+        "  pop ebx",
+        "  ret",
+        "2:",                        // child runs on the new stack (esp = ecx)
+        "  pop eax",                 // eax = entry; esp now points at arg
+        "  call eax",                // entry(arg); never returns
+        "  mov eax, 1",              // SYS_exit (fallback)
+        "  xor ebx, ebx",
+        "  int 0x80",
+    );
+
+    #[cfg(target_arch = "arm")]
+    core::arch::global_asm!(
+        ".text",
+        ".globl __purestd_clone",
+        "__purestd_clone:",          // r0=entry, r1=stack_top, r2=flags, r3=arg
+        "  push {{r4, r7}}",         // callee-saved registers we clobber
+        "  bic r1, r1, #15",         // align child stack
+        "  str r0, [r1, #-8]!",      // r1 -= 8; save entry at [r1]
+        "  str r3, [r1, #4]",        // save arg at [r1+4]
+        "  mov r0, r2",              // clone flags (child_stack already in r1)
+        "  mov r2, #0",              // parent_tid
+        "  mov r3, #0",              // tls
+        "  mov r4, #0",              // child_tid
+        "  mov r7, #120",            // SYS_clone
+        "  svc #0",
+        "  cmp r0, #0",
+        "  bne 1f",                  // parent: r0 = child tid
+        "  ldr r1, [sp]",            // child (sp = new stack): r1 = entry
+        "  ldr r0, [sp, #4]",        // r0 = arg
+        "  blx r1",                  // entry(arg); never returns
+        "  mov r7, #1",              // SYS_exit (fallback)
+        "  mov r0, #0",
+        "  svc #0",
+        "1:",
+        "  pop {{r4, r7}}",          // parent: restore callee-saved
+        "  bx lr",
+    );
+
     // Thread creation flags (shared VM, fds, signals, same thread group).
     const CLONE_VM: usize = 0x00000100;
     const CLONE_FS: usize = 0x00000200;

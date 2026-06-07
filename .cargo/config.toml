@@ -22,3 +22,11 @@ rustflags = ["-Cdefault-linker-libraries=yes"]
 [target.riscv64gc-unknown-linux-gnu]
 linker = "riscv64-linux-gnu-gcc"
 rustflags = ["-Cdefault-linker-libraries=yes"]
+
+[target.i686-unknown-linux-gnu]
+linker = "i686-linux-gnu-gcc"
+rustflags = ["-Cdefault-linker-libraries=yes"]
+
+[target.arm-unknown-linux-gnueabihf]
+linker = "arm-linux-gnueabihf-gcc"
+rustflags = ["-Cdefault-linker-libraries=yes"]

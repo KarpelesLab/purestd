@@ -203,24 +203,59 @@ fn st_mode(b: &syscall::StatBuf) -> u32 {
 fn st_mode(b: &syscall::StatBuf) -> u32 {
     u32::from_ne_bytes([b[24], b[25], b[26], b[27]])
 }
-#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "riscv64")))]
+// st_mode sits at offset 16 on every Linux layout except x86-64 (asm-generic
+// `struct stat` and the 32-bit `struct stat64` agree here).
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "x86",
+        target_arch = "arm"
+    )
+))]
 fn st_mode(b: &syscall::StatBuf) -> u32 {
     u32::from_ne_bytes([b[16], b[17], b[18], b[19]])
 }
 
+// st_size: 64-bit on every target. On 32-bit Linux this is `struct stat64`,
+// whose `long long` alignment differs — i386 packs it at 44 (4-byte aligned),
+// ARM EABI at 48 (8-byte aligned).
 #[cfg(target_os = "macos")]
 const ST_SIZE_OFF: usize = 96;
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(target_os = "linux", target_arch = "x86"))]
+const ST_SIZE_OFF: usize = 44;
+#[cfg(all(target_os = "linux", not(target_arch = "x86")))]
 const ST_SIZE_OFF: usize = 48;
+
+// st_mtime tv_sec. 64-bit (`read_i64`) on 64-bit targets; a 32-bit field in the
+// 32-bit `struct stat64`, with i386 and ARM at different offsets.
 #[cfg(target_os = "macos")]
 const ST_MTIME_OFF: usize = 48;
-#[cfg(not(target_os = "macos"))]
+#[cfg(all(target_os = "linux", target_arch = "x86"))]
+const ST_MTIME_OFF: usize = 72;
+#[cfg(all(target_os = "linux", target_arch = "arm"))]
+const ST_MTIME_OFF: usize = 80;
+#[cfg(all(target_os = "linux", not(any(target_arch = "x86", target_arch = "arm"))))]
 const ST_MTIME_OFF: usize = 88;
 
 fn read_i64(b: &[u8], off: usize) -> i64 {
     let mut a = [0u8; 8];
     a.copy_from_slice(&b[off..off + 8]);
     i64::from_ne_bytes(a)
+}
+
+/// Read an `st_*time` seconds field: 32-bit in the 32-bit `struct stat64`,
+/// 64-bit elsewhere.
+fn read_time_secs(b: &[u8], off: usize) -> i64 {
+    #[cfg(all(target_os = "linux", target_pointer_width = "32"))]
+    {
+        u32::from_ne_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]]) as i64
+    }
+    #[cfg(not(all(target_os = "linux", target_pointer_width = "32")))]
+    {
+        read_i64(b, off)
+    }
 }
 
 /// The type of a file (regular/dir/symlink). Drop-in for `std::fs::FileType`.
@@ -282,7 +317,7 @@ impl Metadata {
         Permissions(st_mode(&self.raw) & 0o7777)
     }
     pub fn modified(&self) -> io::Result<crate::time::SystemTime> {
-        let secs = read_i64(&self.raw, ST_MTIME_OFF);
+        let secs = read_time_secs(&self.raw, ST_MTIME_OFF);
         Ok(crate::time::UNIX_EPOCH + crate::time::Duration::from_secs(secs as u64))
     }
 }
@@ -492,7 +527,15 @@ impl Iterator for ReadDir {
 const ST_UID_OFF: usize = 16;
 #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
 const ST_UID_OFF: usize = 28;
-#[cfg(all(target_os = "linux", any(target_arch = "aarch64", target_arch = "riscv64")))]
+#[cfg(all(
+    target_os = "linux",
+    any(
+        target_arch = "aarch64",
+        target_arch = "riscv64",
+        target_arch = "x86",
+        target_arch = "arm"
+    )
+))]
 const ST_UID_OFF: usize = 24;
 
 impl Metadata {

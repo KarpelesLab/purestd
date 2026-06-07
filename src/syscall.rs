@@ -167,14 +167,54 @@ pub const SEEK_END: i32 = 2;
 /// `lseek(fd, offset, whence)` -> resulting absolute offset.
 #[inline]
 pub fn lseek(fd: i32, offset: i64, whence: i32) -> Result<u64, Errno> {
-    from_ret(unsafe { arch::syscall3(nr::LSEEK, fd as usize, offset as usize, whence as usize) })
-        .map(|o| o as u64)
+    #[cfg(all(target_os = "linux", target_pointer_width = "32"))]
+    {
+        // 32-bit Linux has no 64-bit `lseek`; `_llseek` splits the offset into
+        // high/low halves and writes the resulting position through a pointer.
+        let mut result: u64 = 0;
+        from_ret(unsafe {
+            arch::syscall5(
+                nr::LLSEEK,
+                fd as usize,
+                (offset >> 32) as usize,
+                offset as u32 as usize,
+                &mut result as *mut u64 as usize,
+                whence as usize,
+            )
+        })
+        .map(|_| result)
+    }
+    #[cfg(not(all(target_os = "linux", target_pointer_width = "32")))]
+    {
+        from_ret(unsafe { arch::syscall3(nr::LSEEK, fd as usize, offset as usize, whence as usize) })
+            .map(|o| o as u64)
+    }
 }
 
 /// `ftruncate(fd, len)`.
 #[inline]
 pub fn ftruncate(fd: i32, len: u64) -> Result<(), Errno> {
-    from_ret(unsafe { arch::syscall2(nr::FTRUNCATE, fd as usize, len as usize) }).map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    {
+        // ftruncate64(fd, len_low, len_high) — two consecutive 32-bit args.
+        from_ret(unsafe {
+            arch::syscall3(nr::FTRUNCATE, fd as usize, len as u32 as usize, (len >> 32) as usize)
+        })
+        .map(|_| ())
+    }
+    #[cfg(all(target_os = "linux", target_arch = "arm"))]
+    {
+        // ARM EABI passes the 64-bit length in an aligned (r2,r3) pair, so r1 is
+        // a padding slot: ftruncate64(fd, pad, len_low, len_high).
+        from_ret(unsafe {
+            arch::syscall4(nr::FTRUNCATE, fd as usize, 0, len as u32 as usize, (len >> 32) as usize)
+        })
+        .map(|_| ())
+    }
+    #[cfg(not(all(target_os = "linux", any(target_arch = "x86", target_arch = "arm"))))]
+    {
+        from_ret(unsafe { arch::syscall2(nr::FTRUNCATE, fd as usize, len as usize) }).map(|_| ())
+    }
 }
 
 /// `fsync(fd)`.
@@ -414,39 +454,68 @@ pub fn gettimeofday() -> Result<(u64, u64), Errno> {
 }
 
 // ---- sockets ----
+//
+// i386 has no individual socket syscalls: every operation multiplexes through
+// `socketcall(call_no, args_ptr)`, where `args_ptr` points at the original args
+// widened to `usize`. Each wrapper below computes the raw return `r` two ways —
+// `socketcall` on i686, a direct syscall everywhere else — then shares one
+// `from_ret`. All other arches keep the individual syscalls.
+
+/// i386 `socketcall(call, &[args...])`.
+#[cfg(all(target_os = "linux", target_arch = "x86"))]
+#[inline]
+unsafe fn socketcall(call: usize, args: &[usize]) -> usize {
+    arch::syscall2(nr::SOCKETCALL, call, args.as_ptr() as usize)
+}
 
 /// `socket(domain, type, protocol)` -> fd.
 #[inline]
 pub fn socket(domain: i32, ty: i32, protocol: i32) -> Result<i32, Errno> {
-    from_ret(unsafe { arch::syscall3(nr::SOCKET, domain as usize, ty as usize, protocol as usize) })
-        .map(|fd| fd as i32)
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_SOCKET, &[domain as usize, ty as usize, protocol as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall3(nr::SOCKET, domain as usize, ty as usize, protocol as usize) };
+    from_ret(r).map(|fd| fd as i32)
 }
 
 /// `connect(fd, addr, addrlen)`.
 #[inline]
 pub fn connect(fd: i32, addr: *const u8, addrlen: u32) -> Result<(), Errno> {
-    from_ret(unsafe { arch::syscall3(nr::CONNECT, fd as usize, addr as usize, addrlen as usize) })
-        .map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_CONNECT, &[fd as usize, addr as usize, addrlen as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall3(nr::CONNECT, fd as usize, addr as usize, addrlen as usize) };
+    from_ret(r).map(|_| ())
 }
 
 /// `bind(fd, addr, addrlen)`.
 #[inline]
 pub fn bind(fd: i32, addr: *const u8, addrlen: u32) -> Result<(), Errno> {
-    from_ret(unsafe { arch::syscall3(nr::BIND, fd as usize, addr as usize, addrlen as usize) })
-        .map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_BIND, &[fd as usize, addr as usize, addrlen as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall3(nr::BIND, fd as usize, addr as usize, addrlen as usize) };
+    from_ret(r).map(|_| ())
 }
 
 /// `listen(fd, backlog)`.
 #[inline]
 pub fn listen(fd: i32, backlog: i32) -> Result<(), Errno> {
-    from_ret(unsafe { arch::syscall2(nr::LISTEN, fd as usize, backlog as usize) }).map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_LISTEN, &[fd as usize, backlog as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall2(nr::LISTEN, fd as usize, backlog as usize) };
+    from_ret(r).map(|_| ())
 }
 
 /// `accept(fd, addr, addrlen)` -> new fd.
 #[inline]
 pub fn accept(fd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<i32, Errno> {
-    from_ret(unsafe { arch::syscall3(nr::ACCEPT, fd as usize, addr as usize, addrlen as usize) })
-        .map(|fd| fd as i32)
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_ACCEPT, &[fd as usize, addr as usize, addrlen as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall3(nr::ACCEPT, fd as usize, addr as usize, addrlen as usize) };
+    from_ret(r).map(|fd| fd as i32)
 }
 
 /// `sendto(fd, buf, flags, addr, addrlen)` -> bytes sent.
@@ -458,7 +527,15 @@ pub fn sendto(
     addr: *const u8,
     addrlen: u32,
 ) -> Result<usize, Errno> {
-    from_ret(unsafe {
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe {
+        socketcall(
+            nr::SC_SENDTO,
+            &[fd as usize, buf.as_ptr() as usize, buf.len(), flags as usize, addr as usize, addrlen as usize],
+        )
+    };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe {
         arch::syscall6(
             nr::SENDTO,
             fd as usize,
@@ -468,7 +545,8 @@ pub fn sendto(
             addr as usize,
             addrlen as usize,
         )
-    })
+    };
+    from_ret(r)
 }
 
 /// `recvfrom(fd, buf, flags, addr, addrlen)` -> bytes received.
@@ -480,7 +558,15 @@ pub fn recvfrom(
     addr: *mut u8,
     addrlen: *mut u32,
 ) -> Result<usize, Errno> {
-    from_ret(unsafe {
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe {
+        socketcall(
+            nr::SC_RECVFROM,
+            &[fd as usize, buf.as_mut_ptr() as usize, buf.len(), flags as usize, addr as usize, addrlen as usize],
+        )
+    };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe {
         arch::syscall6(
             nr::RECVFROM,
             fd as usize,
@@ -490,13 +576,22 @@ pub fn recvfrom(
             addr as usize,
             addrlen as usize,
         )
-    })
+    };
+    from_ret(r)
 }
 
 /// `setsockopt(fd, level, name, val, len)`.
 #[inline]
 pub fn setsockopt(fd: i32, level: i32, name: i32, val: *const u8, len: u32) -> Result<(), Errno> {
-    from_ret(unsafe {
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe {
+        socketcall(
+            nr::SC_SETSOCKOPT,
+            &[fd as usize, level as usize, name as usize, val as usize, len as usize],
+        )
+    };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe {
         arch::syscall5(
             nr::SETSOCKOPT,
             fd as usize,
@@ -505,32 +600,38 @@ pub fn setsockopt(fd: i32, level: i32, name: i32, val: *const u8, len: u32) -> R
             val as usize,
             len as usize,
         )
-    })
-    .map(|_| ())
+    };
+    from_ret(r).map(|_| ())
 }
 
 /// `getsockname(fd, addr, addrlen)`.
 #[inline]
 pub fn getsockname(fd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), Errno> {
-    from_ret(unsafe {
-        arch::syscall3(nr::GETSOCKNAME, fd as usize, addr as usize, addrlen as usize)
-    })
-    .map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_GETSOCKNAME, &[fd as usize, addr as usize, addrlen as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall3(nr::GETSOCKNAME, fd as usize, addr as usize, addrlen as usize) };
+    from_ret(r).map(|_| ())
 }
 
 /// `getpeername(fd, addr, addrlen)`.
 #[inline]
 pub fn getpeername(fd: i32, addr: *mut u8, addrlen: *mut u32) -> Result<(), Errno> {
-    from_ret(unsafe {
-        arch::syscall3(nr::GETPEERNAME, fd as usize, addr as usize, addrlen as usize)
-    })
-    .map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_GETPEERNAME, &[fd as usize, addr as usize, addrlen as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall3(nr::GETPEERNAME, fd as usize, addr as usize, addrlen as usize) };
+    from_ret(r).map(|_| ())
 }
 
 /// `shutdown(fd, how)`.
 #[inline]
 pub fn shutdown(fd: i32, how: i32) -> Result<(), Errno> {
-    from_ret(unsafe { arch::syscall2(nr::SHUTDOWN, fd as usize, how as usize) }).map(|_| ())
+    #[cfg(all(target_os = "linux", target_arch = "x86"))]
+    let r = unsafe { socketcall(nr::SC_SHUTDOWN, &[fd as usize, how as usize]) };
+    #[cfg(not(all(target_os = "linux", target_arch = "x86")))]
+    let r = unsafe { arch::syscall2(nr::SHUTDOWN, fd as usize, how as usize) };
+    from_ret(r).map(|_| ())
 }
 
 // ---- process creation ----
@@ -566,7 +667,10 @@ pub fn fork() -> Result<i32, Errno> {
             Ok(x0 as i32)
         }
     }
-    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    #[cfg(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "x86", target_arch = "arm")
+    ))]
     {
         from_ret(unsafe { arch::syscall0(nr::FORK) }).map(|p| p as i32)
     }
