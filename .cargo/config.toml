@@ -13,6 +13,12 @@ rustflags = ["-Cdefault-linker-libraries=yes"]
 [target.x86_64-apple-darwin]
 rustflags = ["-Cdefault-linker-libraries=yes"]
 
+# wasm32-WASI: link the wasi-libc startup (crt1) + libc so the `_start` /
+# `__main_argc_argv` / TLS-init (`__wasi_init_tp`) symbols resolve. purestd still
+# does all its own work through WASI imports; it just links the crt.
+[target.wasm32-wasip1]
+rustflags = ["-Cdefault-linker-libraries=yes"]
+
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-Cdefault-linker-libraries=yes"]
 
